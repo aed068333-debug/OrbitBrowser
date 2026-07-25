@@ -21,10 +21,12 @@ import { browserApi, isTauriRuntime } from "@/lib/tauri";
 import { useUiStore } from "@/stores/uiStore";
 import type { AppLanguage } from "@/stores/uiStore";
 import type { CamoufoxInstallProgress, Settings } from "@/types/domain";
+import { toastError, toastSuccess } from "@/stores/toastStore";
 
 const defaultSettings: Settings = {
   chrome_path: "",
   camoufox_python_path: "",
+  proxy_core_path: "",
   default_concurrency: 2,
   default_locale: "zh-CN",
   default_timezone_id: "auto",
@@ -42,6 +44,7 @@ function settingsSignature(value: Settings) {
   return JSON.stringify({
     chrome_path: value.chrome_path ?? "",
     camoufox_python_path: value.camoufox_python_path ?? "",
+    proxy_core_path: value.proxy_core_path ?? "",
     default_concurrency: value.default_concurrency,
     default_locale: value.default_locale,
     default_timezone_id: value.default_timezone_id,
@@ -159,6 +162,28 @@ export function SettingsPage() {
     },
   });
 
+  const detectProxyCoreMutation = useMutation({
+    mutationFn: browserApi.detectProxyCore,
+    onSuccess: (status) => {
+      if (status.found) {
+        persistProxyCorePath(status.path);
+      }
+    },
+    onError: (error) => toastError(errorMessage(error)),
+  });
+  const installProxyCoreMutation = useMutation({
+    mutationFn: browserApi.ensureProxyCore,
+    onSuccess: (status) => {
+      if (status.found) {
+        persistProxyCorePath(status.path);
+        toastSuccess(text.proxyCoreInstallSuccess);
+      } else {
+        toastError(status.message ?? text.proxyCoreNotDetected);
+      }
+    },
+    onError: (error) => toastError(errorMessage(error)),
+  });
+
   const openDataDirMutation = useMutation({
     mutationFn: browserApi.openDataDir,
   });
@@ -232,6 +257,15 @@ export function SettingsPage() {
   }, [loaded, settings.camoufox_python_path]);
 
   useEffect(() => {
+    if (!loaded || detectProxyCoreMutation.isPending) {
+      return;
+    }
+    // 进入设置页时检测一次，回填/校验已保存内核路径。
+    detectProxyCoreMutation.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+  useEffect(() => {
     if (!loaded) {
       return;
     }
@@ -278,6 +312,17 @@ export function SettingsPage() {
     setSettings(nextSettings);
     saveImmediately(nextSettings);
   };
+
+  function persistProxyCorePath(path?: string | null) {
+    const nextPath = path?.trim() ?? "";
+    if (!nextPath) {
+      return;
+    }
+    if ((currentSettingsRef.current.proxy_core_path ?? "").trim() === nextPath) {
+      return;
+    }
+    applySettingsAndSaveImmediately({ proxy_core_path: nextPath });
+  }
 
   function persistCamoufoxPath(result: {
     found: boolean;
@@ -366,6 +411,8 @@ export function SettingsPage() {
           validateChromeMutation.error ||
           detectCamoufoxMutation.error ||
           installCamoufoxMutation.error ||
+          detectProxyCoreMutation.error ||
+          installProxyCoreMutation.error ||
           openDataDirMutation.error) && (
           <div className="m-5 rounded-lg border border-danger/20 bg-red-50 px-3 py-2 text-sm text-danger">
             {errorMessage(
@@ -375,6 +422,8 @@ export function SettingsPage() {
                 validateChromeMutation.error ??
                 detectCamoufoxMutation.error ??
                 installCamoufoxMutation.error ??
+                detectProxyCoreMutation.error ??
+                installProxyCoreMutation.error ??
                 openDataDirMutation.error,
             )}
           </div>
@@ -515,6 +564,86 @@ export function SettingsPage() {
                   : (camoufoxResult.error ?? text.camoufoxNotDetected)}
               </div>
             ) : null}
+          </section>
+
+          <section className="grid gap-4 p-5">
+            <div>
+              <h3 className="text-[15px] font-semibold text-ink-900">
+                {text.proxyCore}
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-ink-500">
+                {text.proxyCoreHint}
+              </p>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+              <TextField
+                label={text.proxyCorePath}
+                readOnly
+                value={
+                  settings.proxy_core_path?.trim() ||
+                  (installProxyCoreMutation.data ?? detectProxyCoreMutation.data)
+                    ?.path ||
+                  ""
+                }
+              />
+              <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:items-end">
+                <Button
+                  className="w-full whitespace-nowrap lg:w-44"
+                  disabled={
+                    detectProxyCoreMutation.isPending ||
+                    installProxyCoreMutation.isPending
+                  }
+                  icon={<Search className="h-4 w-4" />}
+                  onClick={() => detectProxyCoreMutation.mutate()}
+                >
+                  {text.detectProxyCore}
+                </Button>
+                <Button
+                  className="w-full whitespace-nowrap lg:w-60"
+                  disabled={
+                    detectProxyCoreMutation.isPending ||
+                    installProxyCoreMutation.isPending
+                  }
+                  icon={
+                    installProxyCoreMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )
+                  }
+                  onClick={() => installProxyCoreMutation.mutate()}
+                >
+                  {installProxyCoreMutation.isPending
+                    ? text.installingProxyCore
+                    : text.installProxyCore}
+                </Button>
+              </div>
+            </div>
+            {(() => {
+              const coreStatus =
+                installProxyCoreMutation.data ?? detectProxyCoreMutation.data;
+              const savedPath = settings.proxy_core_path?.trim() || "";
+              const found = coreStatus?.found ?? Boolean(savedPath);
+              if (!coreStatus && !savedPath) {
+                return null;
+              }
+              return (
+                <div
+                  className={`min-w-0 break-words rounded-lg border px-3 py-2 text-sm ${
+                    found
+                      ? "border-ok/20 bg-green-50 text-ok"
+                      : "border-warn/20 bg-amber-50 text-warn"
+                  }`}
+                >
+                  {found
+                    ? format(text.proxyCoreReady, {
+                        kind: coreStatus?.kind ?? "xray",
+                        version: coreStatus?.version ?? (savedPath || "-"),
+                      })
+                    : (coreStatus?.message ?? text.proxyCoreNotDetected)}
+                </div>
+              );
+            })()}
           </section>
 
           <section className="grid gap-4 p-5">

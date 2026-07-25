@@ -93,3 +93,4 @@ fn spawn_windows_explorer(path: &Path) -> io::Result<()> {
         .creation_flags(CREATE_NO_WINDOW);
     command.spawn().map(|_| ())
 }
+pub mod subscriptions;

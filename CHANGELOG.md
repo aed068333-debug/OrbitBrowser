@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added proxy subscription management: import subscription URLs, sync nodes, and bind different nodes to different browser environments.
+- Added local proxy-core bridge for VLESS/VMess/Trojan/Shadowsocks nodes via `xray` or `sing-box` (`ORBIT_PROXY_CORE` / PATH).
+- Added one-click environment creation from subscription nodes, TCP latency probing, and per-subscription auto-sync intervals.
+
 ## 0.5.1
 
 - Hardened Chrome detection on macOS: resolve `.app` bundles, read Info.plist versions without launching Chrome, expand Canary/Beta/Edge/Brave/Homebrew candidates, and treat launchable binaries as found even when `--version` is flaky.

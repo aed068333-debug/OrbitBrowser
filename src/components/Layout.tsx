@@ -2,6 +2,7 @@ import {
   Bot,
   ClipboardList,
   History,
+  Link2,
   Settings,
   SquareStack,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import {
   WindowControls,
 } from "@/components/WindowControls";
 import { useI18n } from "@/i18n";
+import { ToastHost } from "@/components/ToastHost";
 import { useUiStore } from "@/stores/uiStore";
 
 export function Layout() {
@@ -25,6 +27,7 @@ export function Layout() {
   const navigation = useMemo(
     () => [
       { to: "/environments", label: copy.layout.nav.environments, icon: SquareStack },
+      { to: "/subscriptions", label: copy.layout.nav.subscriptions, icon: Link2 },
       { to: "/tasks", label: copy.layout.nav.tasks, icon: ClipboardList },
       { to: "/runs", label: copy.layout.nav.runs, icon: History },
       { to: "/agent", label: copy.layout.nav.agent, icon: Bot },
@@ -35,6 +38,7 @@ export function Layout() {
   const titleMap = useMemo<Record<string, { title: string }>>(
     () => ({
       "/environments": copy.layout.pages.environments,
+      "/subscriptions": copy.layout.pages.subscriptions,
       "/tasks": copy.layout.pages.tasks,
       "/runs": copy.layout.pages.runs,
       "/agent": copy.layout.pages.agent,
@@ -69,7 +73,7 @@ export function Layout() {
 
   return (
     <div className="app-shell h-screen min-w-[1280px] overflow-hidden text-ink-900">
-      {isWindows ? <WindowControls labels={copy.layout.windowControls} /> : null}
+      <ToastHost />
       <aside
         className="app-sidebar fixed inset-y-0 left-0 z-20 flex w-56 flex-col overflow-hidden border-r"
       >
@@ -135,20 +139,25 @@ export function Layout() {
       </aside>
       <main className="flex h-screen min-h-0 flex-col pl-56">
         <header
-          className={`app-header z-10 flex h-16 shrink-0 items-center justify-between gap-4 border-b px-6 transition-colors duration-200 ease-out ${
-            isWindows ? "app-header-windows" : ""
-          }`}
+          className="app-header z-10 flex h-16 shrink-0 items-center justify-between gap-4 border-b pl-6 transition-colors duration-200 ease-out"
           data-tauri-drag-region="deep"
         >
-          <div className="min-w-0">
+          <div className="min-w-0 pr-2">
             <h1 className="text-lg font-semibold tracking-tight text-ink-900">{page.title}</h1>
           </div>
-          <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-w-0 items-center justify-end gap-3">
             {headerActions ? (
-            <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-              {headerActions}
-            </div>
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-2 pr-2">
+                {headerActions}
+              </div>
             ) : null}
+            {isWindows ? (
+              <div className="app-header-window-controls shrink-0 self-stretch">
+                <WindowControls labels={copy.layout.windowControls} />
+              </div>
+            ) : (
+              <div className="w-6 shrink-0" aria-hidden="true" />
+            )}
           </div>
         </header>
         <div className="mx-auto flex min-h-0 w-full max-w-[1480px] flex-1 overflow-hidden px-5 py-4">

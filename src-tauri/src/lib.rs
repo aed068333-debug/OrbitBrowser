@@ -5,6 +5,7 @@ mod commands;
 mod domain;
 mod errors;
 mod mcp;
+mod proxy;
 mod queue;
 mod storage;
 
@@ -42,6 +43,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            // Windows 使用自定义标题栏按钮，启动时强制关闭系统边框，避免原生按钮与自定义按钮重复。
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
+
             let data_dir = resolve_app_data_dir()?;
             let state = AppState::initialize(data_dir)?;
             let resume_state = state.clone();
@@ -78,6 +85,18 @@ pub fn run() {
             commands::environments::get_environment_statuses,
             commands::environments::validate_environment,
             commands::environments::test_environment_proxy,
+            commands::subscriptions::list_proxy_subscriptions,
+            commands::subscriptions::save_proxy_subscription,
+            commands::subscriptions::delete_proxy_subscription,
+            commands::subscriptions::list_proxy_subscription_nodes,
+            commands::subscriptions::sync_proxy_subscription,
+            commands::subscriptions::detect_proxy_core,
+            commands::subscriptions::ensure_proxy_core,
+            commands::subscriptions::apply_subscription_node_to_environment,
+            commands::subscriptions::ensure_subscription_node_proxy,
+            commands::subscriptions::probe_subscription_nodes,
+            commands::subscriptions::create_environments_from_subscription_nodes,
+            commands::subscriptions::sync_due_proxy_subscriptions,
             commands::environments::open_environment_profile_dir,
             commands::tasks::list_tasks,
             commands::tasks::save_task,

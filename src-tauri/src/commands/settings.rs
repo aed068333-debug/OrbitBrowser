@@ -68,6 +68,7 @@ pub fn get_settings(state: State<'_, AppState>) -> AppResult<Settings> {
                 SaveSettingsInput {
                     chrome_path: Some(path),
                     camoufox_python_path: settings.camoufox_python_path.clone(),
+                    proxy_core_path: settings.proxy_core_path.clone(),
                     default_concurrency: settings.default_concurrency,
                     default_locale: settings.default_locale.clone(),
                     default_timezone_id: settings.default_timezone_id.clone(),

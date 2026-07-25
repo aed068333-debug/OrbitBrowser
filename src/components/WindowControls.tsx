@@ -33,6 +33,11 @@ export function WindowControls({ labels }: WindowControlsProps) {
   }, [appWindow]);
 
   useEffect(() => {
+    // 再次确保无边框，防止配置未生效时系统按钮与自定义按钮并存。
+    void appWindow.setDecorations(false).catch(() => undefined);
+  }, [appWindow]);
+
+  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
@@ -66,7 +71,7 @@ export function WindowControls({ labels }: WindowControlsProps) {
   };
 
   return (
-    <div className="window-controls fixed right-0 top-0 z-30 flex">
+    <div className="window-controls flex h-full items-stretch">
       <button
         aria-label={labels.minimize}
         className="window-control"

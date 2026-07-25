@@ -13,6 +13,7 @@ import { DiagnosticsPage } from "@/pages/DiagnosticsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
 import { RunsPage } from "@/pages/RunsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { SubscriptionsPage } from "@/pages/SubscriptionsPage";
 import { TaskDetailPage, TasksPage } from "@/pages/TasksPage";
 
 export function App() {
@@ -127,6 +128,7 @@ export function App() {
           <Route element={<Layout />} path="/">
             <Route element={<Navigate replace to="/environments" />} index />
             <Route element={<EnvironmentsPage />} path="environments" />
+            <Route element={<SubscriptionsPage />} path="subscriptions" />
             <Route element={<TasksPage />} path="tasks" />
             <Route element={<TaskDetailPage />} path="tasks/new" />
             <Route element={<TaskDetailPage />} path="tasks/:taskId" />

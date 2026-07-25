@@ -4,6 +4,13 @@ use std::path::Path;
 
 pub fn run(conn: &Connection, data_dir: &Path) -> rusqlite::Result<()> {
     conn.execute_batch(include_str!("../../migrations/001_init.sql"))?;
+    conn.execute_batch(include_str!("../../migrations/002_proxy_subscriptions.sql"))?;
+    ensure_column(
+        conn,
+        "proxy_subscriptions",
+        "auto_sync_interval_minutes",
+        "ALTER TABLE proxy_subscriptions ADD COLUMN auto_sync_interval_minutes INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(
         conn,
         "run_batches",
@@ -63,6 +70,12 @@ pub fn run(conn: &Connection, data_dir: &Path) -> rusqlite::Result<()> {
         "settings",
         "aigc_api_key",
         "ALTER TABLE settings ADD COLUMN aigc_api_key TEXT",
+    )?;
+    ensure_column(
+        conn,
+        "settings",
+        "proxy_core_path",
+        "ALTER TABLE settings ADD COLUMN proxy_core_path TEXT",
     )?;
 
     let now = Utc::now().to_rfc3339();

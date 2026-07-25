@@ -32,6 +32,17 @@ import type {
   Settings,
   TaskRun,
   TaskValidationResult,
+  ProxySubscription,
+  ProxySubscriptionNode,
+  ProxySubscriptionSyncResult,
+  ProxyCoreStatus,
+  SaveProxySubscriptionInput,
+  ApplySubscriptionNodeInput,
+  LocalProxyEndpoint,
+  ProbeSubscriptionNodesResult,
+  ProbeSubscriptionNodesInput,
+  CreateEnvironmentsFromNodesResult,
+  CreateEnvironmentsFromNodesInput,
 } from "@/types/domain";
 
 export const COMMANDS = {
@@ -45,6 +56,18 @@ export const COMMANDS = {
   getEnvironmentStatuses: "get_environment_statuses",
   validateEnvironment: "validate_environment",
   testEnvironmentProxy: "test_environment_proxy",
+  listProxySubscriptions: "list_proxy_subscriptions",
+  saveProxySubscription: "save_proxy_subscription",
+  deleteProxySubscription: "delete_proxy_subscription",
+  listProxySubscriptionNodes: "list_proxy_subscription_nodes",
+  syncProxySubscription: "sync_proxy_subscription",
+  detectProxyCore: "detect_proxy_core",
+  ensureProxyCore: "ensure_proxy_core",
+  applySubscriptionNodeToEnvironment: "apply_subscription_node_to_environment",
+  ensureSubscriptionNodeProxy: "ensure_subscription_node_proxy",
+  probeSubscriptionNodes: "probe_subscription_nodes",
+  createEnvironmentsFromSubscriptionNodes: "create_environments_from_subscription_nodes",
+  syncDueProxySubscriptions: "sync_due_proxy_subscriptions",
   openEnvironmentProfileDir: "open_environment_profile_dir",
   listTasks: "list_tasks",
   saveTask: "save_task",
@@ -96,6 +119,8 @@ const mockNow = new Date().toISOString();
 
 let mockEnvironments: Environment[] = [];
 let mockTasks: AutomationTask[] = [];
+let mockSubscriptions: ProxySubscription[] = [];
+let mockSubscriptionNodes: ProxySubscriptionNode[] = [];
 const mockAgentHistories: Record<
   string,
   Record<string, AgentHistorySnapshot>
@@ -176,6 +201,85 @@ function mockInvoke<TResult>(
       } as TResult;
     case COMMANDS.validateEnvironment:
       return undefined as TResult;
+    
+    case COMMANDS.listProxySubscriptions:
+      return mockSubscriptions as TResult;
+    case COMMANDS.saveProxySubscription: {
+      const input = args?.input as SaveProxySubscriptionInput;
+      const subscription: ProxySubscription = {
+        id: input.id ?? crypto.randomUUID(),
+        name: input.name,
+        url: input.url,
+        enabled: input.enabled,
+        auto_sync_interval_minutes: input.auto_sync_interval_minutes ?? 0,
+        node_count: mockSubscriptionNodes.filter((node) => node.subscription_id === (input.id ?? "")).length,
+        created_at: mockNow,
+        updated_at: mockNow,
+      };
+      mockSubscriptions = [
+        subscription,
+        ...mockSubscriptions.filter((item) => item.id !== subscription.id),
+      ];
+      return subscription as TResult;
+    }
+    case COMMANDS.deleteProxySubscription:
+      mockSubscriptions = mockSubscriptions.filter((item) => item.id !== args?.id);
+      mockSubscriptionNodes = mockSubscriptionNodes.filter(
+        (item) => item.subscription_id !== args?.id,
+      );
+      return undefined as TResult;
+    case COMMANDS.listProxySubscriptionNodes: {
+      const subscriptionId = args?.subscriptionId as string | undefined;
+      return (
+        subscriptionId
+          ? mockSubscriptionNodes.filter((item) => item.subscription_id === subscriptionId)
+          : mockSubscriptionNodes
+      ) as TResult;
+    }
+    case COMMANDS.syncProxySubscription: {
+      const subscription = mockSubscriptions.find((item) => item.id === args?.id);
+      if (!subscription) {
+        throw { code: "subscription_not_found", message: "Subscription not found" };
+      }
+      return {
+        subscription: { ...subscription, node_count: 0, last_synced_at: mockNow },
+        nodes: [],
+        imported: 0,
+        skipped: 0,
+      } as TResult;
+    }
+    case COMMANDS.detectProxyCore:
+    case COMMANDS.ensureProxyCore:
+      return {
+        found: false,
+        searched_paths: [],
+        message: "Preview mode does not detect local proxy cores",
+      } as TResult;
+    case COMMANDS.applySubscriptionNodeToEnvironment: {
+      const input = args?.input as ApplySubscriptionNodeInput;
+      const environment = mockEnvironments.find((item) => item.id === input.environment_id);
+      if (!environment) {
+        throw { code: "environment_not_found", message: "Environment not found" };
+      }
+      return environment as TResult;
+    }
+    case COMMANDS.ensureSubscriptionNodeProxy:
+      return {
+        host: "127.0.0.1",
+        port: 1080,
+        kind: "socks5",
+        node_id: String(args?.nodeId ?? ""),
+        node_name: "preview",
+        core_kind: "preview",
+        config_path: "",
+      } as TResult;
+    case COMMANDS.syncDueProxySubscriptions:
+      return [] as TResult;
+    case COMMANDS.createEnvironmentsFromSubscriptionNodes:
+      return { created: [], skipped: 0 } as TResult;
+    case COMMANDS.probeSubscriptionNodes:
+      return { results: [] } as TResult;
+
     case COMMANDS.testEnvironmentProxy: {
       const environment = mockEnvironments.find((item) => item.id === args?.id);
       const proxyConfigured =
@@ -374,6 +478,7 @@ function mockInvoke<TResult>(
         chrome_path:
           "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         camoufox_python_path: "/usr/bin/python3",
+        proxy_core_path: "",
         default_concurrency: 2,
         default_locale: "zh-CN",
         default_timezone_id: "Asia/Shanghai",
@@ -685,6 +790,55 @@ export const browserApi = {
   testEnvironmentProxy: (environmentId: string) =>
     invokeCommand<ProxyTestResult>(COMMANDS.testEnvironmentProxy, {
       id: environmentId,
+    }),
+
+  listProxySubscriptions: () =>
+    invokeCommand<ProxySubscription[]>(COMMANDS.listProxySubscriptions),
+
+  saveProxySubscription: (input: SaveProxySubscriptionInput) =>
+    invokeCommand<ProxySubscription>(COMMANDS.saveProxySubscription, { input }),
+
+  deleteProxySubscription: (id: string) =>
+    invokeCommand<void>(COMMANDS.deleteProxySubscription, { id }),
+
+  listProxySubscriptionNodes: (subscriptionId?: string) =>
+    invokeCommand<ProxySubscriptionNode[]>(COMMANDS.listProxySubscriptionNodes, {
+      subscriptionId,
+    }),
+
+  syncProxySubscription: (id: string) =>
+    invokeCommand<ProxySubscriptionSyncResult>(COMMANDS.syncProxySubscription, {
+      id,
+    }),
+
+  detectProxyCore: () => invokeCommand<ProxyCoreStatus>(COMMANDS.detectProxyCore),
+
+  ensureProxyCore: () => invokeCommand<ProxyCoreStatus>(COMMANDS.ensureProxyCore),
+
+  applySubscriptionNodeToEnvironment: (input: ApplySubscriptionNodeInput) =>
+    invokeCommand<Environment>(COMMANDS.applySubscriptionNodeToEnvironment, {
+      input,
+    }),
+
+  ensureSubscriptionNodeProxy: (nodeId: string) =>
+    invokeCommand<LocalProxyEndpoint>(COMMANDS.ensureSubscriptionNodeProxy, {
+      nodeId,
+    }),
+
+  syncDueProxySubscriptions: () =>
+    invokeCommand<ProxySubscriptionSyncResult[]>(COMMANDS.syncDueProxySubscriptions),
+
+  createEnvironmentsFromSubscriptionNodes: (
+    input: CreateEnvironmentsFromNodesInput,
+  ) =>
+    invokeCommand<CreateEnvironmentsFromNodesResult>(
+      COMMANDS.createEnvironmentsFromSubscriptionNodes,
+      { input },
+    ),
+
+  probeSubscriptionNodes: (input: ProbeSubscriptionNodesInput) =>
+    invokeCommand<ProbeSubscriptionNodesResult>(COMMANDS.probeSubscriptionNodes, {
+      input,
     }),
 
   openEnvironmentProfileDir: (environmentId: string) =>

@@ -7,3 +7,4 @@ pub mod migrations;
 pub mod run_repo;
 pub mod settings_repo;
 pub mod task_repo;
+pub mod subscription_repo;

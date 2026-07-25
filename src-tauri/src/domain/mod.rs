@@ -6,3 +6,4 @@ pub mod proxy;
 pub mod run;
 pub mod settings;
 pub mod task;
+pub mod subscription;

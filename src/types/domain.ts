@@ -233,6 +233,7 @@ export interface RunFilters {
 export interface Settings {
   chrome_path?: string | null;
   camoufox_python_path?: string | null;
+  proxy_core_path?: string | null;
   default_concurrency: number;
   default_locale: string;
   default_timezone_id: string;
@@ -420,4 +421,117 @@ export interface Diagnostics {
   };
   warnings?: string[];
   generated_at?: string;
+}
+
+
+export type SubscriptionNodeProtocol =
+  | "http"
+  | "https"
+  | "socks4"
+  | "socks5"
+  | "shadowsocks"
+  | "trojan"
+  | "vmess"
+  | "vless"
+  | "hysteria2"
+  | "unknown";
+
+export interface ProxySubscription {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  auto_sync_interval_minutes: number;
+  last_synced_at?: string | null;
+  last_error?: string | null;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProxySubscriptionNode {
+  id: string;
+  subscription_id: string;
+  name: string;
+  protocol: SubscriptionNodeProtocol;
+  server: string;
+  port: number;
+  share_uri: string;
+  tags: string[];
+  latency_ms?: number | null;
+  is_meta: boolean;
+  config_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveProxySubscriptionInput {
+  id?: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  auto_sync_interval_minutes: number;
+}
+
+export interface ProxySubscriptionSyncResult {
+  subscription: ProxySubscription;
+  nodes: ProxySubscriptionNode[];
+  imported: number;
+  skipped: number;
+}
+
+export interface ProxyCoreStatus {
+  found: boolean;
+  path?: string | null;
+  kind?: string | null;
+  version?: string | null;
+  searched_paths: string[];
+  message?: string | null;
+}
+
+export interface ApplySubscriptionNodeInput {
+  environment_id: string;
+  node_id: string;
+}
+
+export interface LocalProxyEndpoint {
+  host: string;
+  port: number;
+  kind: ProxyKind;
+  node_id: string;
+  node_name: string;
+  core_kind: string;
+  config_path: string;
+}
+
+
+export interface CreateEnvironmentsFromNodesInput {
+  subscription_id: string;
+  node_ids?: string[];
+  group_id?: string;
+  name_prefix?: string;
+  only_usable: boolean;
+}
+
+export interface CreateEnvironmentsFromNodesResult {
+  created: Environment[];
+  skipped: number;
+}
+
+export interface ProbeSubscriptionNodesInput {
+  subscription_id: string;
+  node_ids?: string[];
+  only_usable: boolean;
+}
+
+export interface SubscriptionNodeLatency {
+  node_id: string;
+  name: string;
+  ok: boolean;
+  latency_ms?: number | null;
+  message: string;
+}
+
+export interface ProbeSubscriptionNodesResult {
+  results: SubscriptionNodeLatency[];
 }

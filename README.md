@@ -91,7 +91,8 @@ capabilities to local agents through MCP — all backed by local SQLite storage.
 
 - **Proxy-first workflow**  
   Configure HTTP, HTTPS, SOCKS4, SOCKS5, proxy authentication, bypass lists, and
-  per-environment proxy checks.
+  per-environment proxy checks. Import subscription URLs, sync nodes, and bind
+  different nodes to environments via a local xray/sing-box bridge.
 
 - **Repeatable task execution**  
   Save JavaScript automation tasks, run them across one or many environments,

@@ -472,19 +472,22 @@ textarea[data-code-editor="true"] {
     background-color: var(--header-bg);
   }
 
-  .app-header-windows {
-    padding-right: calc(var(--window-control-width) * 3 + 1.5rem);
+  .app-header-window-controls {
+    display: flex;
+    align-items: stretch;
+    margin-right: 0;
   }
 
   .window-controls {
-    height: var(--window-control-height);
+    height: 100%;
     color: var(--window-control-fg);
   }
 
   .window-control {
     display: flex;
     width: var(--window-control-width);
-    height: var(--window-control-height);
+    height: 100%;
+    min-height: var(--window-control-height);
     align-items: center;
     justify-content: center;
     border: 0;

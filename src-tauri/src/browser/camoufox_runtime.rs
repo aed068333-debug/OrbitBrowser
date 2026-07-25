@@ -446,11 +446,18 @@ fn proxy_profile(env: &Environment) -> Value {
         ProxyKind::Socks5 => "socks5",
         ProxyKind::None => return json!(null),
     };
-    json!({
+    let mut value = json!({
         "server": format!("{scheme}://{host}:{port}"),
-        "username": env.proxy_config.username,
-        "password": env.proxy_config.password,
-    })
+    });
+    if !env.proxy_config.is_subscription_binding() {
+        if let Some(username) = env.proxy_config.username.clone() {
+            value["username"] = json!(username);
+        }
+        if let Some(password) = env.proxy_config.password.clone() {
+            value["password"] = json!(password);
+        }
+    }
+    value
 }
 
 fn camoufox_os_constraint(platform: Option<&str>) -> Value {

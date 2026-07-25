@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub chrome_path: Option<String>,
     pub camoufox_python_path: Option<String>,
+    pub proxy_core_path: Option<String>,
     pub default_concurrency: i64,
     pub default_locale: String,
     pub default_timezone_id: String,
@@ -23,6 +24,7 @@ pub struct Settings {
 pub struct SaveSettingsInput {
     pub chrome_path: Option<String>,
     pub camoufox_python_path: Option<String>,
+    pub proxy_core_path: Option<String>,
     pub default_concurrency: i64,
     pub default_locale: String,
     pub default_timezone_id: String,

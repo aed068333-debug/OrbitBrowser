@@ -51,6 +51,8 @@ import type {
   ProxyConfig,
   ProxyKind,
   ProxyTestResult,
+  ProxySubscription,
+  ProxySubscriptionNode,
   Settings,
   TaskRun,
 } from "@/types/domain";
@@ -250,6 +252,60 @@ function parseTagsText(value: string): string[] {
     .split(/[;,]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+
+function extractBoundSubscriptionNodeId(proxy: ProxyConfig): string | null {
+  const username = proxy.username?.trim() ?? "";
+  if (!username.startsWith("orbit-node:")) {
+    return null;
+  }
+  const nodeId = username.slice("orbit-node:".length).trim();
+  return nodeId || null;
+}
+
+function buildProxyConfigFromSubscriptionNode(
+  node: ProxySubscriptionNode,
+  bypassList?: string[],
+): ProxyConfig {
+  const list =
+    bypassList?.filter(Boolean).length
+      ? bypassList.filter(Boolean)
+      : defaultProxyBypassList;
+
+  if (
+    node.protocol === "http" ||
+    node.protocol === "https" ||
+    node.protocol === "socks4" ||
+    node.protocol === "socks5"
+  ) {
+    let config: Record<string, unknown> = {};
+    try {
+      config = JSON.parse(node.config_json || "{}") as Record<string, unknown>;
+    } catch {
+      config = {};
+    }
+    return {
+      kind: node.protocol,
+      host: String(config.host ?? node.server),
+      port: Number(config.port ?? node.port) || node.port,
+      username:
+        typeof config.username === "string" ? config.username : undefined,
+      password:
+        typeof config.password === "string" ? config.password : undefined,
+      bypass_list: list,
+    };
+  }
+
+  // 协议节点：保存绑定标记，启动/测代理时再拉起本地内核。
+  return {
+    kind: "socks5",
+    host: "127.0.0.1",
+    port: undefined,
+    username: `orbit-node:${node.id}`,
+    password: node.name,
+    bypass_list: list,
+  };
 }
 
 function normalizeProxyKind(value: string): ProxyKind {
@@ -1222,7 +1278,11 @@ export function EnvironmentsPage() {
                             <div className="truncate">
                               {proxy.kind === "none"
                                 ? text.noProxy
-                                : `${proxy.kind}://${proxy.host ?? "-"}:${proxy.port ?? "-"}`}
+                                : extractBoundSubscriptionNodeId(proxy)
+                                  ? proxy.port
+                                    ? `${text.fields.subscriptionProxyLabel}: ${proxy.password || "-"} → 127.0.0.1:${proxy.port}`
+                                    : `${text.fields.subscriptionProxyLabel}: ${proxy.password || "-"} (${text.fields.subscriptionProxyPending})`
+                                  : `${proxy.kind}://${proxy.host ?? "-"}:${proxy.port ?? "-"}`}
                             </div>
                             {proxyResults[environment.id] ? (
                               <div className="mt-1 truncate text-xs text-ink-500">
@@ -1597,16 +1657,85 @@ function EnvironmentModal({
   const [draft, setDraft] = useState<EnvironmentDraft>(
     environment ?? toDraft(),
   );
+  const [proxySource, setProxySource] = useState<"manual" | "subscription">(
+    "manual",
+  );
+  const [selectedSubscriptionId, setSelectedSubscriptionId] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState("");
+
+  const subscriptionsQuery = useQuery({
+    queryKey: ["proxy-subscriptions"],
+    queryFn: browserApi.listProxySubscriptions,
+  });
+  const nodesQuery = useQuery({
+    queryKey: ["proxy-subscription-nodes", selectedSubscriptionId],
+    queryFn: () =>
+      browserApi.listProxySubscriptionNodes(
+        selectedSubscriptionId || undefined,
+      ),
+    enabled: Boolean(selectedSubscriptionId),
+  });
 
   useEffect(() => {
     if (environment) {
       setDraft(environment);
+      const boundNodeId = extractBoundSubscriptionNodeId(
+        normalizeProxy(environment as Environment),
+      );
+      if (boundNodeId) {
+        setProxySource("subscription");
+        setSelectedNodeId(boundNodeId);
+      } else {
+        setProxySource("manual");
+        setSelectedNodeId("");
+      }
     }
   }, [environment]);
+
+  useEffect(() => {
+    const nodes = nodesQuery.data ?? [];
+    if (!selectedNodeId) {
+      return;
+    }
+    const matched = nodes.find((node) => node.id === selectedNodeId);
+    if (matched) {
+      setSelectedSubscriptionId((current) => current || matched.subscription_id);
+      return;
+    }
+    // When editing an existing bound node, recover subscription id after nodes load.
+    if (!selectedSubscriptionId && nodes.length === 0) {
+      return;
+    }
+  }, [nodesQuery.data, selectedNodeId, selectedSubscriptionId]);
+
+  // Resolve subscription id for bound node once all nodes available.
+  useEffect(() => {
+    if (!selectedNodeId || selectedSubscriptionId) {
+      return;
+    }
+    let cancelled = false;
+    void browserApi.listProxySubscriptionNodes().then((nodes) => {
+      if (cancelled) return;
+      const matched = nodes.find((node) => node.id === selectedNodeId);
+      if (matched) {
+        setSelectedSubscriptionId(matched.subscription_id);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNodeId, selectedSubscriptionId]);
 
   if (!environment) {
     return null;
   }
+
+  const subscriptions = subscriptionsQuery.data ?? [];
+  const nodes = (nodesQuery.data ?? []).filter((node) => !node.is_meta);
+  const selectedNode =
+    nodes.find((node) => node.id === selectedNodeId) ??
+    (nodesQuery.data ?? []).find((node) => node.id === selectedNodeId) ??
+    null;
 
   const update = <TKey extends keyof EnvironmentDraft>(
     key: TKey,
@@ -1633,6 +1762,63 @@ function EnvironmentModal({
         [key]: value,
       } as ProxyConfig,
     }));
+  };
+
+  const applySubscriptionNode = (node: ProxySubscriptionNode | null) => {
+    if (!node) {
+      return;
+    }
+    setDraft((current) => ({
+      ...current,
+      proxy_config: buildProxyConfigFromSubscriptionNode(
+        node,
+        current.proxy_config?.bypass_list,
+      ),
+      // 没名字时自动用节点名，方便新建。
+      name:
+        current.name.trim() && !current.name.startsWith(text.defaultName)
+          ? current.name
+          : node.name,
+      group_id: current.group_id?.trim()
+        ? current.group_id
+        : subscriptions.find((item) => item.id === node.subscription_id)?.name ??
+          current.group_id,
+      tags: Array.from(
+        new Set([
+          ...(current.tags ?? []),
+          "subscription",
+          node.protocol,
+          ...(node.tags ?? []),
+        ]),
+      ),
+    }));
+  };
+
+  const switchProxySource = (source: "manual" | "subscription") => {
+    setProxySource(source);
+    if (source === "manual") {
+      setSelectedNodeId("");
+      setDraft((current) => ({
+        ...current,
+        proxy_config: {
+          kind: current.proxy_config?.kind === "none" ? "http" : (current.proxy_config?.kind ?? "http"),
+          host: current.proxy_config?.host,
+          port: current.proxy_config?.port,
+          username: current.proxy_config?.username?.startsWith("orbit-node:")
+            ? undefined
+            : current.proxy_config?.username,
+          password: current.proxy_config?.username?.startsWith("orbit-node:")
+            ? undefined
+            : current.proxy_config?.password,
+          bypass_list:
+            current.proxy_config?.bypass_list ?? defaultProxyBypassList,
+        },
+      }));
+      return;
+    }
+    if (selectedNode) {
+      applySubscriptionNode(selectedNode);
+    }
   };
 
   return (
@@ -1780,60 +1966,177 @@ function EnvironmentModal({
           <h3 className="text-sm font-semibold text-ink-900">
             {text.sections.proxy}
           </h3>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+
+          <div className="grid gap-2 md:max-w-md">
             <SelectField
-              label={text.fields.proxyType}
+              label={text.fields.proxySource}
               onChange={(event) =>
-                updateProxy("kind", event.target.value as ProxyKind)
+                switchProxySource(
+                  event.target.value === "subscription"
+                    ? "subscription"
+                    : "manual",
+                )
               }
-              value={draft.proxy_config?.kind ?? "none"}
+              value={proxySource}
             >
-              <option value="none">{text.fields.proxyNone}</option>
-              <option value="http">HTTP</option>
-              <option value="https">HTTPS</option>
-              <option value="socks4">SOCKS4</option>
-              <option value="socks5">SOCKS5</option>
+              <option value="manual">{text.fields.proxySourceManual}</option>
+              <option value="subscription">
+                {text.fields.proxySourceSubscription}
+              </option>
             </SelectField>
-            <TextField
-              hint={text.fields.hostHint}
-              label={text.fields.host}
-              onChange={(event) => updateProxy("host", event.target.value)}
-              value={draft.proxy_config?.host ?? ""}
-            />
-            <TextField
-              label={text.fields.port}
-              min={0}
-              onChange={(event) =>
-                updateProxy("port", Number(event.target.value) || undefined)
-              }
-              type="number"
-              value={draft.proxy_config?.port ?? ""}
-            />
-            <TextField
-              label={text.fields.username}
-              onChange={(event) => updateProxy("username", event.target.value)}
-              value={draft.proxy_config?.username ?? ""}
-            />
-            <TextField
-              label={text.fields.password}
-              onChange={(event) => updateProxy("password", event.target.value)}
-              type="password"
-              value={draft.proxy_config?.password ?? ""}
-            />
+            {proxySource === "subscription" ? (
+              <p className="text-xs leading-5 text-ink-500">
+                {text.fields.proxySourceHint}
+              </p>
+            ) : null}
           </div>
-          <TextField
-            label={text.fields.bypassList}
-            onChange={(event) =>
-              updateProxy(
-                "bypass_list",
-                event.target.value
-                  .split(",")
-                  .map((item) => item.trim())
-                  .filter(Boolean),
-              )
-            }
-            value={(draft.proxy_config?.bypass_list ?? []).join(", ")}
-          />
+
+          {proxySource === "subscription" ? (
+            <div className="grid gap-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                <SelectField
+                  label={text.fields.subscription}
+                  onChange={(event) => {
+                    setSelectedSubscriptionId(event.target.value);
+                    setSelectedNodeId("");
+                  }}
+                  value={selectedSubscriptionId}
+                >
+                  <option value="">
+                    {text.fields.subscriptionPlaceholder}
+                  </option>
+                  {subscriptions.map((subscription) => (
+                    <option key={subscription.id} value={subscription.id}>
+                      {subscription.name} ({subscription.node_count})
+                    </option>
+                  ))}
+                </SelectField>
+                <SelectField
+                  label={text.fields.subscriptionNode}
+                  onChange={(event) => {
+                    const nodeId = event.target.value;
+                    setSelectedNodeId(nodeId);
+                    const node =
+                      nodes.find((item) => item.id === nodeId) ?? null;
+                    applySubscriptionNode(node);
+                  }}
+                  value={selectedNodeId}
+                >
+                  <option value="">
+                    {text.fields.subscriptionNodePlaceholder}
+                  </option>
+                  {nodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {node.name} · {node.protocol} · {node.server}:{node.port}
+                      {node.latency_ms != null ? ` · ${node.latency_ms}ms` : ""}
+                    </option>
+                  ))}
+                </SelectField>
+              </div>
+
+              {selectedNode ? (
+                <div className="rounded-md border border-line bg-ink-50 px-3 py-2 text-xs leading-5 text-ink-600">
+                  <span className="font-medium text-ink-900">
+                    {selectedNode.name}
+                  </span>
+                  <span className="text-ink-400"> · </span>
+                  <span>
+                    {selectedNode.protocol} · {selectedNode.server}:
+                    {selectedNode.port}
+                    {selectedNode.latency_ms != null
+                      ? ` · ${selectedNode.latency_ms} ms`
+                      : ""}
+                  </span>
+                  <span className="text-ink-400"> · </span>
+                  <span>{text.fields.subscriptionBoundHint}</span>
+                </div>
+              ) : (
+                <p className="text-xs leading-5 text-ink-500">
+                  {subscriptions.length === 0
+                    ? text.fields.subscriptionEmpty
+                    : text.fields.subscriptionNodePlaceholder}
+                </p>
+              )}
+
+              <TextField
+                label={text.fields.bypassList}
+                onChange={(event) =>
+                  updateProxy(
+                    "bypass_list",
+                    event.target.value
+                      .split(",")
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  )
+                }
+                value={(draft.proxy_config?.bypass_list ?? []).join(", ")}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <SelectField
+                  label={text.fields.proxyType}
+                  onChange={(event) =>
+                    updateProxy("kind", event.target.value as ProxyKind)
+                  }
+                  value={draft.proxy_config?.kind ?? "none"}
+                >
+                  <option value="none">{text.fields.proxyNone}</option>
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                  <option value="socks4">SOCKS4</option>
+                  <option value="socks5">SOCKS5</option>
+                </SelectField>
+                <TextField
+                  hint={text.fields.hostHint}
+                  label={text.fields.host}
+                  onChange={(event) => updateProxy("host", event.target.value)}
+                  value={draft.proxy_config?.host ?? ""}
+                />
+                <TextField
+                  label={text.fields.port}
+                  min={0}
+                  onChange={(event) =>
+                    updateProxy(
+                      "port",
+                      Number(event.target.value) || undefined,
+                    )
+                  }
+                  type="number"
+                  value={draft.proxy_config?.port ?? ""}
+                />
+                <TextField
+                  label={text.fields.username}
+                  onChange={(event) =>
+                    updateProxy("username", event.target.value)
+                  }
+                  value={draft.proxy_config?.username ?? ""}
+                />
+                <TextField
+                  label={text.fields.password}
+                  onChange={(event) =>
+                    updateProxy("password", event.target.value)
+                  }
+                  type="password"
+                  value={draft.proxy_config?.password ?? ""}
+                />
+              </div>
+              <TextField
+                label={text.fields.bypassList}
+                onChange={(event) =>
+                  updateProxy(
+                    "bypass_list",
+                    event.target.value
+                      .split(",")
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  )
+                }
+                value={(draft.proxy_config?.bypass_list ?? []).join(", ")}
+              />
+            </>
+          )}
         </section>
 
         <section className="grid gap-3">

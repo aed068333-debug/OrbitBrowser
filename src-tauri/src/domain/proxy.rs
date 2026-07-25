@@ -51,7 +51,17 @@ impl ProxyConfig {
         Some(format!("{scheme}://{host}:{port}"))
     }
 
+    pub fn is_subscription_binding(&self) -> bool {
+        self.username
+            .as_deref()
+            .is_some_and(|value| value.starts_with("orbit-node:"))
+    }
+
     pub fn has_auth(&self) -> bool {
+        // 订阅节点绑定标记不是代理账号，避免被当成 proxy-auth extension。
+        if self.is_subscription_binding() {
+            return false;
+        }
         self.username
             .as_deref()
             .is_some_and(|value| !value.is_empty())
@@ -59,5 +69,14 @@ impl ProxyConfig {
                 .password
                 .as_deref()
                 .is_some_and(|value| !value.is_empty())
+    }
+
+    pub fn bound_subscription_node_id(&self) -> Option<String> {
+        self.username
+            .as_deref()
+            .and_then(|value| value.strip_prefix("orbit-node:"))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
     }
 }

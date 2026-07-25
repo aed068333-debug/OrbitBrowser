@@ -11,6 +11,7 @@ use crate::domain::environment::{
 };
 use crate::domain::proxy::ProxyConfig;
 use crate::errors::{AppError, AppResult};
+use crate::commands::subscriptions;
 use crate::storage::{environment_repo, legacy_cleanup, run_repo, settings_repo};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -291,6 +292,21 @@ async fn start_environment_inner_with_options(
     }
 
     let settings = settings_repo::get(state.db())?;
+    let mut env = env;
+    env.proxy_config = subscriptions::ensure_environment_proxy_ready(
+        state.data_dir(),
+        &env.proxy_config,
+        state.db(),
+    )?;
+    if env.proxy_config.kind != crate::domain::proxy::ProxyKind::None
+        && env.proxy_config.chrome_server().is_none()
+    {
+        return Err(AppError::new(
+            "proxy_core_start_failed",
+            "Proxy is configured but local entry is not ready. Orbit will try to download managed Xray automatically; check network or set ORBIT_PROXY_CORE.",
+        )
+        .retryable(true));
+    }
     if matches!(env.browser_kind, BrowserKind::Camoufox) {
         return start_camoufox_environment(
             state,
@@ -687,6 +703,11 @@ pub fn validate_environment(input: SaveEnvironmentInput) -> AppResult<()> {
         ));
     }
     validate_geolocation(input.geolocation_latitude, input.geolocation_longitude)?;
+    let bound_subscription_node = input
+        .proxy_config
+        .username
+        .as_deref()
+        .is_some_and(|value| value.starts_with("orbit-node:"));
     if input.proxy_config.kind != crate::domain::proxy::ProxyKind::None
         && (input
             .proxy_config
@@ -695,7 +716,7 @@ pub fn validate_environment(input: SaveEnvironmentInput) -> AppResult<()> {
             .unwrap_or("")
             .trim()
             .is_empty()
-            || input.proxy_config.port.is_none())
+            || (input.proxy_config.port.is_none() && !bound_subscription_node))
     {
         return Err(AppError::new(
             "proxy_invalid",
@@ -710,8 +731,20 @@ pub async fn test_environment_proxy(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<ProxyTestResult> {
-    let env = environment_repo::get(state.db(), &id)?;
+    let mut env = environment_repo::get(state.db(), &id)?;
+    env.proxy_config = subscriptions::ensure_environment_proxy_ready(
+        state.data_dir(),
+        &env.proxy_config,
+        state.db(),
+    )?;
     if env.proxy_config.chrome_server().is_none() {
+        if env.proxy_config.is_subscription_binding() {
+            return Err(AppError::new(
+                "proxy_core_start_failed",
+                "Subscription node proxy is not ready. Orbit will try to download managed Xray automatically; check network or set ORBIT_PROXY_CORE, then retry.",
+            )
+            .retryable(true));
+        }
         return Ok(ProxyTestResult {
             ok: true,
             message: "No proxy configured".to_string(),
@@ -844,8 +877,10 @@ async fn probe_ip_timezone_with_proxy(
 ) -> AppResult<ProxyProbeResult> {
     let mut proxy = reqwest::Proxy::all(server)
         .map_err(|err| AppError::new("proxy_invalid", format!("Invalid proxy format: {err}")))?;
-    if let Some(username) = proxy_config.username.as_deref() {
-        proxy = proxy.basic_auth(username, proxy_config.password.as_deref().unwrap_or(""));
+    if !proxy_config.is_subscription_binding() {
+        if let Some(username) = proxy_config.username.as_deref() {
+            proxy = proxy.basic_auth(username, proxy_config.password.as_deref().unwrap_or(""));
+        }
     }
     let client = reqwest::Client::builder()
         .proxy(proxy)

@@ -8,7 +8,7 @@ pub fn get(db: &Db) -> AppResult<Settings> {
     let conn = db.connect()?;
     let settings = conn.query_row(
         r#"
-        SELECT chrome_path, camoufox_python_path, default_concurrency, default_locale,
+        SELECT chrome_path, camoufox_python_path, proxy_core_path, default_concurrency, default_locale,
                default_timezone_id,
                default_viewport_width, default_viewport_height, data_dir,
                aigc_base_url, aigc_model, aigc_api_key, created_at, updated_at
@@ -20,17 +20,18 @@ pub fn get(db: &Db) -> AppResult<Settings> {
             Ok(Settings {
                 chrome_path: normalize_optional(row.get(0)?),
                 camoufox_python_path: normalize_optional(row.get(1)?),
-                default_concurrency: row.get(2)?,
-                default_locale: row.get(3)?,
-                default_timezone_id: row.get(4)?,
-                default_viewport_width: row.get(5)?,
-                default_viewport_height: row.get(6)?,
-                data_dir: row.get(7)?,
-                aigc_base_url: row.get(8)?,
-                aigc_model: row.get(9)?,
-                aigc_api_key: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+                proxy_core_path: normalize_optional(row.get(2)?),
+                default_concurrency: row.get(3)?,
+                default_locale: row.get(4)?,
+                default_timezone_id: row.get(5)?,
+                default_viewport_width: row.get(6)?,
+                default_viewport_height: row.get(7)?,
+                data_dir: row.get(8)?,
+                aigc_base_url: row.get(9)?,
+                aigc_model: row.get(10)?,
+                aigc_api_key: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
             })
         },
     )?;
@@ -45,20 +46,22 @@ pub fn save(db: &Db, input: SaveSettingsInput) -> AppResult<Settings> {
         UPDATE settings
         SET chrome_path = ?1,
             camoufox_python_path = ?2,
-            default_concurrency = ?3,
-            default_locale = ?4,
-            default_timezone_id = ?5,
-            default_viewport_width = ?6,
-            default_viewport_height = ?7,
-            aigc_base_url = ?8,
-            aigc_model = ?9,
-            aigc_api_key = ?10,
-            updated_at = ?11
+            proxy_core_path = ?3,
+            default_concurrency = ?4,
+            default_locale = ?5,
+            default_timezone_id = ?6,
+            default_viewport_width = ?7,
+            default_viewport_height = ?8,
+            aigc_base_url = ?9,
+            aigc_model = ?10,
+            aigc_api_key = ?11,
+            updated_at = ?12
         WHERE id = 1
         "#,
         params![
             normalize_optional(input.chrome_path),
             normalize_optional(input.camoufox_python_path),
+            normalize_optional(input.proxy_core_path),
             input.default_concurrency.max(1),
             input.default_locale,
             input.default_timezone_id,
@@ -104,6 +107,7 @@ mod tests {
             SaveSettingsInput {
                 chrome_path: None,
                 camoufox_python_path: Some("  /opt/orbit/bin/python3  ".to_string()),
+                proxy_core_path: None,
                 default_concurrency: 2,
                 default_locale: "zh-CN".to_string(),
                 default_timezone_id: "auto".to_string(),
@@ -131,6 +135,7 @@ mod tests {
             SaveSettingsInput {
                 chrome_path: None,
                 camoufox_python_path: Some("   ".to_string()),
+                proxy_core_path: None,
                 default_concurrency: 2,
                 default_locale: "zh-CN".to_string(),
                 default_timezone_id: "auto".to_string(),

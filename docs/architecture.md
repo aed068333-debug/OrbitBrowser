@@ -7,6 +7,7 @@ React UI
   └── Tauri commands
         ├── settings       App settings and Chrome detection
         ├── environments   Browser environment CRUD, start, stop, proxy test
+        ├── subscriptions  Proxy subscription import, node sync, local core bridge
         ├── tasks          Automation task persistence, validation, execution
         ├── runs           Run history, logs, artifacts
         └── diagnostics    Local diagnostics and cleanup
@@ -15,6 +16,7 @@ Rust core
   ├── domain      Domain models
   ├── storage     SQLite repositories and migrations
   ├── browser     Chrome path resolution, launch args, CDP, profile locks
+  ├── proxy       Subscription parsing and local proxy-core lifecycle
   ├── automation  deno_core runtime, script API, permission model
   └── queue       Batch scheduling and background workers
 ```

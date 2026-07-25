@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Added proxy subscription management: import subscription URLs, sync nodes, and bind different nodes to different browser environments.
-- Added local proxy-core bridge for VLESS/VMess/Trojan/Shadowsocks nodes via `xray` or `sing-box` (`ORBIT_PROXY_CORE` / PATH).
-- Added one-click environment creation from subscription nodes, TCP latency probing, and per-subscription auto-sync intervals.
+## 0.6.0
+
+- Added proxy subscription management: import subscription URLs, sync nodes, probe latency, auto-sync, and bind different nodes to different browser environments.
+- Added managed local Xray core install/detect in Settings, with persisted `proxy_core_path` and automatic download of Xray 25.12.8 when needed.
+- Bridged VLESS/VMess/Trojan/Shadowsocks subscription nodes through a local SOCKS entry on environment launch and proxy test.
+- Fixed proxy connectivity with system VPN/fake-ip setups by keeping node hostnames and using `allowInsecure` on managed Xray 25.x.
+- Improved subscription/environment UX with floating toasts, compact subscription-node hints, and cleaner subscription list layout.
 
 ## 0.5.1
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed Camoufox Chinese/Japanese/Korean text rendering as tofu boxes on
+  macOS/Windows hosts when the target platform font list contains no locally
+  installed CJK font: the runtime now feeds the host's CJK font families into
+  Camoufox for CJK locales and preflights glyph rendering at startup.
+
 ## 0.6.0
 
 - Added proxy subscription management: import subscription URLs, sync nodes, probe latency, auto-sync, and bind different nodes to different browser environments.

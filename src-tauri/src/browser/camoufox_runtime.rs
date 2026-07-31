@@ -56,6 +56,9 @@ def build_kwargs(profile):
     os_name = profile.get("os")
     if os_name:
         kwargs["os"] = os_name
+    cjk_fonts = profile.get("cjk_fonts")
+    if cjk_fonts:
+        kwargs["fonts"] = cjk_fonts
     width = profile.get("viewport_width")
     height = profile.get("viewport_height")
     if width and height:
@@ -248,6 +251,36 @@ def execute_action(page, payload):
             return None
     raise ValueError(f"unknown action: {action}")
 
+def cjk_preflight(page, locale):
+    if not locale or not (
+        locale.startswith("zh") or locale.startswith("ja") or locale.startswith("ko")
+    ):
+        return None
+    try:
+        ok = page.evaluate("""() => {
+            const c = document.createElement('canvas'); c.width = 120; c.height = 120;
+            const x = c.getContext('2d');
+            x.font = '90px sans-serif';
+            x.fillText('\\u4e2d', 0, 90);
+            const a = x.getImageData(0, 0, 120, 120).data;
+            let d1 = 0; for (let i = 0; i < a.length; i += 4) if (a[i] < 128) d1++;
+            x.fillStyle = '#fff'; x.fillRect(0, 0, 120, 120);
+            x.font = '90px sans-serif';
+            x.fillText('\\ufffd', 0, 90);
+            const b = x.getImageData(0, 0, 120, 120).data;
+            let d2 = 0; for (let i = 0; i < b.length; i += 4) if (b[i] < 128) d2++;
+            return Math.abs(d1 - d2) / Math.max(d1, d2, 1) > 0.2;
+        }""")
+        if ok is False:
+            print(
+                "CJK font preflight failed: Chinese/Japanese/Korean text may render as boxes; "
+                "the target platform font list lacks a locally installed CJK font.",
+                file=sys.stderr,
+            )
+    except Exception as exc:
+        print(f"CJK font preflight skipped: {exc}", file=sys.stderr)
+
+
 def install_recorders(page):
     def emit(event):
         events.put(event)
@@ -350,6 +383,7 @@ def main():
         start_url = profile.get("start_url") or "about:blank"
         if start_url:
             page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+        cjk_preflight(page, profile.get("locale"))
         ready = True
         print(json.dumps({"event": "ready"}), flush=True)
         while running:
@@ -425,11 +459,59 @@ fn worker_profile(
         "web_rtc_protection": env.web_rtc_protection,
         "locale": runtime_locale,
         "os": camoufox_os_constraint(env.platform.as_deref()),
+        "cjk_fonts": cjk_font_families_for_locale(runtime_locale),
         "viewport_width": env.viewport_width,
         "viewport_height": env.viewport_height,
         "start_url": env.start_url.as_deref().unwrap_or("about:blank"),
         "proxy": proxy_profile(env),
     })
+}
+
+/// True for locales that need CJK glyphs (Chinese, Japanese, Korean).
+fn locale_is_cjk(locale: &str) -> bool {
+    let lower = locale.trim().to_ascii_lowercase();
+    lower.starts_with("zh") || lower.starts_with("ja") || lower.starts_with("ko")
+}
+
+/// CJK font families installed on the *host* OS. Camoufox isolates rendering
+/// to the target platform's font list; on macOS/Windows hosts the bundled
+/// `fonts/` directory is never registered with the platform font system
+/// (daijro/camoufox#706), so a Windows-target font list (SimSun, Microsoft
+/// YaHei, ...) resolves to nothing and Chinese/Japanese/Korean text renders as
+/// tofu boxes. Feeding the host's CJK families through Camoufox's `fonts`
+/// option puts real CJK fonts back into the renderer while keeping the target
+/// OS fingerprint intact.
+fn cjk_font_families() -> Vec<&'static str> {
+    if cfg!(target_os = "macos") {
+        vec![
+            "PingFang SC",
+            "Songti SC",
+            "Kaiti SC",
+            "STHeiti",
+            "Hiragino Sans GB",
+        ]
+    } else if cfg!(target_os = "windows") {
+        vec![
+            "Microsoft YaHei",
+            "SimSun",
+            "SimHei",
+            "KaiTi",
+            "FangSong",
+            "DengXian",
+            "NSimSun",
+        ]
+    } else {
+        vec![
+            "Noto Sans CJK SC",
+            "Noto Sans SC",
+            "WenQuanYi Zen Hei",
+            "WenQuanYi Micro Hei",
+        ]
+    }
+}
+
+fn cjk_font_families_for_locale(locale: &str) -> Option<Vec<&'static str>> {
+    locale_is_cjk(locale).then(cjk_font_families)
 }
 
 fn proxy_profile(env: &Environment) -> Value {
@@ -525,5 +607,159 @@ mod tests {
     fn worker_avoids_camoufox_compressed_response_corruption() {
         assert!(WORKER_SCRIPT
             .contains("browser.set_extra_http_headers({\"Accept-Encoding\": \"gzip, deflate\"})"));
+    }
+
+    #[test]
+    fn worker_passes_host_cjk_fonts_into_camoufox() {
+        assert!(WORKER_SCRIPT.contains("kwargs[\"fonts\"] = cjk_fonts"));
+    }
+
+    #[test]
+    fn worker_preflights_cjk_rendering() {
+        assert!(WORKER_SCRIPT.contains("def cjk_preflight"));
+        assert!(WORKER_SCRIPT.contains("CJK font preflight failed"));
+        assert!(WORKER_SCRIPT.contains("cjk_preflight(page, locale)"));
+    }
+
+    #[test]
+    fn cjk_locale_detection_matches_zh_ja_ko() {
+        assert!(locale_is_cjk("zh-CN"));
+        assert!(locale_is_cjk("zh-TW"));
+        assert!(locale_is_cjk("zh-HK"));
+        assert!(locale_is_cjk("ja-JP"));
+        assert!(locale_is_cjk("ko-KR"));
+        assert!(!locale_is_cjk("en-US"));
+        assert!(!locale_is_cjk("fr-FR"));
+        assert!(!locale_is_cjk(""));
+    }
+
+    #[test]
+    fn cjk_font_families_are_nonempty_on_every_host() {
+        assert!(!cjk_font_families().is_empty());
+    }
+
+    #[test]
+    fn cjk_fonts_are_only_injected_for_cjk_locales() {
+        let with_zh = json!({"locale": "zh-CN", "cjk_fonts": cjk_font_families_for_locale("zh-CN")});
+        assert!(
+            with_zh["cjk_fonts"]
+                .as_array()
+                .is_some_and(|families| !families.is_empty())
+        );
+        let with_en = json!({"locale": "en-US", "cjk_fonts": cjk_font_families_for_locale("en-US")});
+        assert!(with_en["cjk_fonts"].is_null());
+    }
+
+    fn health_ok(port: u16) -> bool {
+        use std::io::{Read as _, Write as _};
+        if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+            let _ = stream.write_all(b"GET /health HTTP/1.0\r\n\r\n");
+            let mut buf = [0u8; 512];
+            if let Ok(n) = stream.read(&mut buf) {
+                return String::from_utf8_lossy(&buf[..n]).contains("200 OK");
+            }
+        }
+        false
+    }
+
+    #[test]
+    #[ignore = "launches the local Camoufox browser runtime"]
+    fn camoufox_worker_starts_ready_without_cjk_errors() -> crate::errors::AppResult<()> {
+        use crate::domain::environment::{BrowserKind, EnvironmentMode};
+        use crate::domain::proxy::ProxyConfig;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let data_dir = std::env::temp_dir().join(format!(
+            "orbit-camoufox-smoke-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let profile_dir = data_dir.join("profile");
+        std::fs::create_dir_all(&profile_dir)?;
+        let control_port = crate::browser::port_allocator::allocate()?;
+        let env = Environment {
+            id: "env_camoufox_smoke".to_string(),
+            name: "Camoufox Smoke".to_string(),
+            group_id: None,
+            tags: Vec::new(),
+            notes: None,
+            browser_kind: BrowserKind::Camoufox,
+            chrome_path_override: None,
+            profile_dir: profile_dir.to_string_lossy().to_string(),
+            proxy_config: ProxyConfig::default(),
+            locale: "zh-CN".to_string(),
+            timezone_id: None,
+            geolocation_latitude: None,
+            geolocation_longitude: None,
+            user_agent: None,
+            platform: None,
+            web_rtc_protection: true,
+            viewport_width: 900,
+            viewport_height: 700,
+            device_scale_factor: 1.0,
+            environment_mode: EnvironmentMode::Standard,
+            seed: None,
+            headless: true,
+            start_url: Some("about:blank".to_string()),
+            last_proxy_test: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            deleted_at: None,
+        };
+        let launch_plan = build(&data_dir, &env, &profile_dir, control_port, "zh-CN")?;
+        let profile_json: Value =
+            serde_json::from_str(&std::fs::read_to_string(&launch_plan.profile_json_path)?)?;
+        assert!(
+            profile_json["cjk_fonts"]
+                .as_array()
+                .is_some_and(|families| !families.is_empty()),
+            "worker profile must inject host CJK fonts for zh-CN locale"
+        );
+        let python_path = crate::browser::camoufox_locator::resolve(None)?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&launch_plan.log_path)?;
+        let stderr_log = log.try_clone()?;
+        let mut child = Command::new(&python_path)
+            .arg(&launch_plan.worker_script_path)
+            .arg(&launch_plan.profile_json_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(stderr_log))
+            .spawn()
+            .expect("worker should spawn");
+
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut ready = false;
+        let mut early_exit: Option<std::process::ExitStatus> = None;
+        while Instant::now() < deadline {
+            if let Some(status) = child.try_wait()? {
+                early_exit = Some(status);
+                break;
+            }
+            if health_ok(control_port) {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let log_text = std::fs::read_to_string(&launch_plan.log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&data_dir);
+
+        if let Some(status) = early_exit {
+            panic!(
+                "worker exited before ready with {status}; log:\n{log_text}"
+            );
+        }
+        assert!(ready, "worker did not become ready; log:\n{log_text}");
+        assert!(
+            !log_text.contains("NameError"),
+            "worker log contains an unhandled NameError:\n{log_text}"
+        );
+        Ok(())
     }
 }

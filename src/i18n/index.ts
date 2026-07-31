@@ -555,9 +555,14 @@ export const copy = {
 
     subscriptions: {
       addSubscription: "添加订阅",
+      pageEyebrow: "代理网络",
+      pageTitle: "代理订阅",
+      pageHint: "导入订阅链接并同步节点，选择可用节点绑定到不同环境。",
       metrics: {
         subscriptions: "订阅",
         nodes: "节点",
+        usable: "可用节点",
+        testedCount: "已测速 {{count}}",
         autoSync: "自动同步",
         core: "内核",
         coreMissing: "未就绪",
@@ -1226,9 +1231,14 @@ export const copy = {
 
     subscriptions: {
       addSubscription: "Add Subscription",
+      pageEyebrow: "PROXY NETWORK",
+      pageTitle: "Proxy Subscriptions",
+      pageHint: "Import subscription links, sync nodes, and bind usable nodes to environments.",
       metrics: {
         subscriptions: "Subs",
         nodes: "Nodes",
+        usable: "Usable nodes",
+        testedCount: "{{count}} tested",
         autoSync: "Auto-sync",
         core: "Core",
         coreMissing: "Missing",

@@ -40,20 +40,20 @@ function defaultDraft(): SaveProxySubscriptionInput {
   };
 }
 
-function latencyTone(latency?: number | null) {
+function latencyDotTone(latency?: number | null) {
   if (latency == null) {
-    return "border-line bg-ink-50 text-ink-500";
+    return "bg-ink-300";
   }
   if (latency < 120) {
-    return "border-ok/20 bg-green-50 text-ok";
+    return "bg-ok";
   }
   if (latency < 260) {
-    return "border-brand-500/20 bg-blue-50 text-brand-600";
+    return "bg-brand-500";
   }
   if (latency < 450) {
-    return "border-warn/20 bg-amber-50 text-warn";
+    return "bg-warn";
   }
-  return "border-danger/20 bg-red-50 text-danger";
+  return "bg-danger";
 }
 
 function protocolTone(protocol: string) {
@@ -172,9 +172,6 @@ export function SubscriptionsPage() {
   const measuredCount = usableNodes.filter(
     (node) => node.latency_ms != null,
   ).length;
-  const autoSyncCount = subscriptions.filter(
-    (item) => item.auto_sync_interval_minutes > 0,
-  ).length;
   const selectedCount = selectedNodeIds.length;
   const allFilteredSelected =
     usableNodes.length > 0 &&
@@ -282,17 +279,6 @@ export function SubscriptionsPage() {
   useEffect(() => {
     setHeaderActions(
       <>
-        <div className="hidden items-center divide-x divide-line rounded-md border border-line bg-ink-50 px-1 text-xs text-ink-500 xl:flex">
-          <span className="px-2.5 py-1.5">
-            {text.metrics.subscriptions}: {subscriptions.length}
-          </span>
-          <span className="px-2.5 py-1.5">
-            {text.metrics.nodes}: {selected?.node_count ?? 0}
-          </span>
-          <span className="px-2.5 py-1.5">
-            {text.metrics.autoSync}: {autoSyncCount}
-          </span>
-        </div>
         <Button
           icon={<RefreshCw className="h-4 w-4" />}
           onClick={() => {
@@ -313,17 +299,11 @@ export function SubscriptionsPage() {
     );
     return () => setHeaderActions(undefined);
   }, [
-    autoSyncCount,
     copy.common.refresh,
     nodesQuery,
-    selected?.node_count,
     setHeaderActions,
-    subscriptions.length,
     subscriptionsQuery,
     text.addSubscription,
-    text.metrics.autoSync,
-    text.metrics.nodes,
-    text.metrics.subscriptions,
   ]);
 
   const openEdit = (subscription: ProxySubscription) =>
@@ -345,26 +325,47 @@ export function SubscriptionsPage() {
 
   return (
     <div className="viewport-page grid-rows-[auto_minmax(0,1fr)]">
-      <section className="panel shrink-0 overflow-hidden p-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative min-w-[240px] flex-1 md:max-w-xl">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500" />
-            <input
-              className="control-focus h-9 w-full rounded-md border border-line bg-white pl-9 pr-3 text-sm"
-              onChange={(event) => setNodeSearch(event.target.value)}
-              placeholder={text.searchNodesPlaceholder}
-              value={nodeSearch}
-            />
+      <section className="shrink-0 overflow-hidden px-1 pt-1 pb-2">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-600">
+              {text.pageEyebrow}
+            </div>
+            <h2 className="mt-1 text-[22px] font-semibold leading-8 tracking-tight text-ink-900">
+              {text.pageTitle}
+            </h2>
+            <p className="mt-1 max-w-xl text-sm leading-5 text-ink-500">
+              {text.pageHint}
+            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500">
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink-50 px-2.5 py-1.5">
-              <Link2 className="h-3.5 w-3.5" />
-              {selected?.name ?? text.emptyTitle}
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink-50 px-2.5 py-1.5">
-              <Gauge className="h-3.5 w-3.5" />
-              {measuredCount}/{usableNodes.length}
-            </span>
+        </div>
+
+        <div className="mt-6 grid grid-cols-3 gap-4">
+          <div className="panel relative overflow-hidden px-5 py-4">
+            <Link2 className="absolute right-4 top-4 h-4 w-4 text-ink-300" />
+            <div className="text-xs text-ink-500">{text.metrics.subscriptions}</div>
+            <div className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-ink-900">
+              {subscriptions.length}
+            </div>
+          </div>
+          <div className="panel relative overflow-hidden px-5 py-4">
+            <Gauge className="absolute right-4 top-4 h-4 w-4 text-ink-300" />
+            <div className="text-xs text-ink-500">{text.metrics.nodes}</div>
+            <div className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-ink-900">
+              {selected?.node_count ?? 0}
+            </div>
+          </div>
+          <div className="panel relative overflow-hidden px-5 py-4">
+            <Zap className="absolute right-4 top-4 h-4 w-4 text-ink-300" />
+            <div className="text-xs text-ink-500">{text.metrics.usable}</div>
+            <div className="mt-1.5 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums tracking-tight text-ink-900">
+                {usableNodes.length}
+              </span>
+              <span className="text-xs text-ink-400">
+                {format(text.metrics.testedCount, { count: measuredCount })}
+              </span>
+            </div>
           </div>
         </div>
       </section>
@@ -408,52 +409,55 @@ export function SubscriptionsPage() {
                   const active = subscription.id === activeSubscriptionId;
                   return (
                     <button
-                      className={`group w-full max-w-full overflow-hidden rounded-xl border px-3.5 py-3 text-left transition ${
+                      className={`group relative w-full overflow-hidden rounded-xl border text-left transition ${
                         active
-                          ? "border-brand-500/35 bg-brand-50 shadow-[inset_0_0_0_1px_rgb(var(--color-brand-500)/0.08)]"
+                          ? "border-brand-500/40 bg-brand-50"
                           : "border-line bg-white hover:border-ink-300 hover:bg-ink-50"
                       }`}
                       key={subscription.id}
                       onClick={() => setSelectedId(subscription.id)}
                       type="button"
                     >
-                      <div className="flex min-w-0 items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1 overflow-hidden">
-                          <div className="truncate text-sm font-semibold text-ink-900">
-                            {subscription.name}
+                      {active ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-brand-500"
+                        />
+                      ) : null}
+                      <div className="min-w-0 px-4 py-3.5 pl-4">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                  subscription.enabled ? "bg-ok" : "bg-ink-300"
+                                }`}
+                              />
+                              <span className="truncate text-sm font-semibold text-ink-900">
+                                {subscription.name}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 truncate text-xs leading-5 text-ink-500">
+                              {subscription.url}
+                            </div>
                           </div>
-                          <div className="mt-1 break-all text-xs leading-5 text-ink-500 line-clamp-2">
-                            {subscription.url}
-                          </div>
-                        </div>
-                        <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-line bg-white px-2 text-xs font-medium text-ink-600">
-                          {subscription.node_count}
-                        </span>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className="inline-flex items-center gap-1 rounded-md border border-line bg-ink-50 px-2 py-1 text-[11px] text-ink-500">
-                          <Clock3 className="h-3 w-3" />
-                          {subscription.last_synced_at
-                            ? formatDateTime(
-                                subscription.last_synced_at,
-                                language,
-                              )
-                            : text.neverSynced}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-md border border-line bg-ink-50 px-2 py-1 text-[11px] text-ink-500">
-                          <RefreshCw className="h-3 w-3" />
-                          {subscription.auto_sync_interval_minutes > 0
-                            ? format(text.autoSyncMinutes, {
-                                minutes:
-                                  subscription.auto_sync_interval_minutes,
-                              })
-                            : text.autoSyncOff}
-                        </span>
-                        {subscription.last_error ? (
-                          <span className="inline-flex items-center rounded-md border border-danger/20 bg-red-50 px-2 py-1 text-[11px] text-danger">
-                            {text.syncFailed}
+                          <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-ink-100 px-1.5 text-xs font-semibold tabular-nums text-ink-600">
+                            {subscription.node_count}
                           </span>
-                        ) : null}
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-400">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock3 className="h-3 w-3" />
+                            {subscription.last_synced_at
+                              ? formatDateTime(subscription.last_synced_at, language)
+                              : text.neverSynced}
+                          </span>
+                          {subscription.last_error ? (
+                            <span className="inline-flex items-center gap-1 text-danger">
+                              {text.syncFailed}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </button>
                   );
@@ -466,15 +470,15 @@ export function SubscriptionsPage() {
         <section className="panel flex min-h-0 min-w-0 flex-col overflow-hidden">
           {selected ? (
             <>
-              <div className="border-b border-line px-4 py-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="border-b border-line px-5 py-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-[15px] font-semibold text-ink-900">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h3 className="text-lg font-semibold tracking-tight text-ink-900">
                         {selected.name}
                       </h3>
                       <span
-                        className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium ${
+                        className={`inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-medium ${
                           selected.enabled
                             ? "border-ok/20 bg-green-50 text-ok"
                             : "border-line bg-ink-50 text-ink-500"
@@ -485,19 +489,21 @@ export function SubscriptionsPage() {
                           : text.statusDisabled}
                       </span>
                     </div>
-                    <div className="mt-1 break-all text-xs leading-5 text-ink-500">
+                    <div className="mt-1.5 break-all text-xs leading-5 text-ink-500">
                       {selected.url}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink-500">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-ink-500">
                       <span>
                         {text.nodeCount}: {selected.node_count}
                       </span>
+                      <span className="text-ink-300">·</span>
                       <span>
                         {text.lastSynced}:{" "}
                         {selected.last_synced_at
                           ? formatDateTime(selected.last_synced_at, language)
                           : text.neverSynced}
                       </span>
+                      <span className="text-ink-300">·</span>
                       <span>
                         {text.autoSync}:{" "}
                         {selected.auto_sync_interval_minutes > 0
@@ -513,59 +519,84 @@ export function SubscriptionsPage() {
                       </div>
                     ) : null}
                   </div>
+                </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button onClick={() => openEdit(selected)} size="sm">
-                      {copy.common.edit}
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      icon={<RefreshCw className="h-4 w-4" />}
-                      onClick={() => syncMutation.mutate(selected.id)}
-                      size="sm"
-                      variant="primary"
-                    >
-                      {text.sync}
-                    </Button>
-                    <Button
-                      disabled={busy || usableNodes.length === 0}
-                      icon={<Gauge className="h-4 w-4" />}
-                      onClick={() =>
-                        probeMutation.mutate({
-                          subscription_id: selected.id,
-                          node_ids:
-                            selectedNodeIds.length > 0
-                              ? selectedNodeIds
-                              : undefined,
-                          only_usable: true,
-                        })
+                <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+                  <Button
+                    className="whitespace-nowrap"
+                    onClick={() => openEdit(selected)}
+                    size="sm"
+                  >
+                    {copy.common.edit}
+                  </Button>
+                  <Button
+                    className="whitespace-nowrap"
+                    disabled={busy}
+                    icon={<RefreshCw className="h-4 w-4" />}
+                    onClick={() => syncMutation.mutate(selected.id)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    {text.sync}
+                  </Button>
+                  <Button
+                    className="whitespace-nowrap"
+                    disabled={busy || usableNodes.length === 0}
+                    icon={<Gauge className="h-4 w-4" />}
+                    onClick={() =>
+                      probeMutation.mutate({
+                        subscription_id: selected.id,
+                        node_ids:
+                          selectedNodeIds.length > 0
+                            ? selectedNodeIds
+                            : undefined,
+                        only_usable: true,
+                      })
+                    }
+                    size="sm"
+                  >
+                    {probeMutation.isPending
+                      ? text.probingLatency
+                      : text.probeLatency}
+                  </Button>
+                  <Button
+                    className="whitespace-nowrap"
+                    disabled={busy || selectedUsableIds.length === 0}
+                    icon={<SquareStack className="h-4 w-4" />}
+                    onClick={() => {
+                      if (!window.confirm(text.createEnvironmentsConfirm)) {
+                        return;
                       }
-                      size="sm"
-                    >
-                      {probeMutation.isPending
-                        ? text.probingLatency
-                        : text.probeLatency}
-                    </Button>
+                      createMutation.mutate({
+                        subscription_id: selected.id,
+                        node_ids: selectedUsableIds,
+                        only_usable: true,
+                        group_id: selected.name,
+                        name_prefix: selected.name,
+                      });
+                    }}
+                    size="sm"
+                  >
+                    {text.createEnvironments}
+                  </Button>
+                  <div className="ml-auto flex items-center gap-3">
+                    {selectedCount > 0 ? (
+                      <>
+                        <span className="text-xs text-ink-500">
+                          {format(text.selectedCount, { count: selectedCount })}
+                        </span>
+                        <Button
+                          className="whitespace-nowrap"
+                          onClick={() => setSelectedNodeIds([])}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          {text.clearSelection}
+                        </Button>
+                      </>
+                    ) : null}
                     <Button
-                      disabled={busy || selectedUsableIds.length === 0}
-                      icon={<SquareStack className="h-4 w-4" />}
-                      onClick={() => {
-                        if (!window.confirm(text.createEnvironmentsConfirm)) {
-                          return;
-                        }
-                        createMutation.mutate({
-                          subscription_id: selected.id,
-                          node_ids: selectedUsableIds,
-                          only_usable: true,
-                          group_id: selected.name,
-                          name_prefix: selected.name,
-                        });
-                      }}
-                      size="sm"
-                    >
-                      {text.createEnvironments}
-                    </Button>
-                    <Button
+                      className="whitespace-nowrap"
                       disabled={busy}
                       icon={<Trash2 className="h-4 w-4" />}
                       onClick={() => {
@@ -582,64 +613,65 @@ export function SubscriptionsPage() {
                 </div>
               </div>
 
-              <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line bg-ink-50 px-4 py-2.5">
-                <Button
-                  icon={
-                    allFilteredSelected ? (
-                      <CheckSquare className="h-4 w-4" />
-                    ) : (
-                      <Square className="h-4 w-4" />
-                    )
-                  }
-                  onClick={() =>
-                    setSelectedNodeIds((current) =>
-                      allFilteredSelected
-                        ? current.filter(
-                            (id) => !usableNodes.some((node) => node.id === id),
-                          )
-                        : Array.from(
-                            new Set([
-                              ...current,
-                              ...usableNodes.map((node) => node.id),
-                            ]),
-                          ),
-                    )
-                  }
-                  size="sm"
-                >
-                  {allFilteredSelected
-                    ? text.clearSelection
-                    : text.selectAllUsable}
-                </Button>
-                <span className="mr-auto text-xs font-medium text-ink-500">
-                  {format(text.selectedCount, { count: selectedCount })}
-                </span>
-                {selectedCount > 0 ? (
-                  <Button
-                    onClick={() => setSelectedNodeIds([])}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    {text.clearSelection}
-                  </Button>
-                ) : null}
-              </div>
-
               <div className="min-h-0 flex-1 overflow-auto">
-                {metaNodes.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 border-b border-line px-4 py-3">
-                    {metaNodes.map((node) => (
-                      <div
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-ink-50 px-2.5 py-1 text-xs text-ink-600"
-                        key={node.id}
-                        title={node.name}
-                      >
-                        <Zap className="h-3 w-3 shrink-0 text-ink-400" />
-                        <span className="max-w-[16rem] truncate">{node.name}</span>
-                      </div>
-                    ))}
+                <div className="flex flex-col gap-3 border-b border-line bg-ink-50/60 px-5 py-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="relative min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                      <input
+                        className="control-focus h-9 w-full rounded-lg border border-line bg-white pl-9 pr-3 text-sm"
+                        onChange={(event) => setNodeSearch(event.target.value)}
+                        placeholder={text.searchNodesPlaceholder}
+                        value={nodeSearch}
+                      />
+                    </div>
+                    <Button
+                      className="whitespace-nowrap"
+                      icon={
+                        allFilteredSelected ? (
+                          <CheckSquare className="h-4 w-4" />
+                        ) : (
+                          <Square className="h-4 w-4" />
+                        )
+                      }
+                      onClick={() =>
+                        setSelectedNodeIds((current) =>
+                          allFilteredSelected
+                            ? current.filter(
+                                (id) =>
+                                  !usableNodes.some((node) => node.id === id),
+                              )
+                            : Array.from(
+                                new Set([
+                                  ...current,
+                                  ...usableNodes.map((node) => node.id),
+                                ]),
+                              ),
+                        )
+                      }
+                      size="sm"
+                      variant="ghost"
+                    >
+                      {allFilteredSelected
+                        ? text.clearSelection
+                        : text.selectAllUsable}
+                    </Button>
                   </div>
-                ) : null}
+                  {metaNodes.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {metaNodes.map((node) => (
+                        <div
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs text-ink-600"
+                          key={node.id}
+                          title={node.name}
+                        >
+                          <Zap className="h-3 w-3 shrink-0 text-ink-400" />
+                          <span className="max-w-[16rem] truncate">{node.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
 
                 {usableNodes.length === 0 ? (
                   <div className="p-4">
@@ -650,18 +682,16 @@ export function SubscriptionsPage() {
                     />
                   </div>
                 ) : (
-                  <section className="table-panel min-w-0 border-0 shadow-none">
-                    <div className="min-w-0 overflow-x-auto">
-                    <table className="w-full min-w-[720px] table-fixed text-left text-sm">
+                  <div className="min-w-0 overflow-x-auto">
+                    <table className="w-full min-w-full table-auto text-left text-sm">
                       <thead>
-                        <tr className="border-b border-line bg-ink-50 text-xs uppercase tracking-wide text-ink-500">
-                          <th className="px-4 py-3 w-10"> </th>
-                          <th className="px-4 py-3">{text.table.name}</th>
-                          <th className="px-4 py-3">{text.table.protocol}</th>
-                          <th className="px-4 py-3">{text.table.endpoint}</th>
-                          <th className="px-4 py-3">{text.latency}</th>
-                          <th className="px-4 py-3">{text.table.tags}</th>
-                          <th className="px-4 py-3 text-right">
+                        <tr className="border-b border-line text-[11px] font-medium uppercase tracking-[0.08em] text-ink-400">
+                          <th className="w-14 whitespace-nowrap px-6 py-3.5"> </th>
+                          <th className="min-w-[11rem] px-5 py-3.5">{text.table.name}</th>
+                          <th className="w-[7.5rem] whitespace-nowrap px-5 py-3.5">{text.table.protocol}</th>
+                          <th className="min-w-[13rem] px-5 py-3.5">{text.table.endpoint}</th>
+                          <th className="w-[7rem] whitespace-nowrap px-5 py-3.5">{text.latency}</th>
+                          <th className="w-[9.5rem] whitespace-nowrap px-5 py-3.5 text-right">
                             {copy.common.actions}
                           </th>
                         </tr>
@@ -672,32 +702,31 @@ export function SubscriptionsPage() {
                           return (
                             <tr
                               className={`border-b border-line transition ${
-                                checked
-                                  ? "bg-[rgb(var(--table-row-selected-bg))]"
-                                  : "bg-white hover:bg-ink-50/70"
+                                checked ? "bg-brand-50" : "bg-white"
                               }`}
                               key={node.id}
                             >
-                              <td className="px-4 py-3">
+                              <td className="px-6 py-3.5">
                                 <input
                                   checked={checked}
+                                  className="h-4 w-4 cursor-pointer accent-brand-600"
                                   onChange={() => toggleNode(node.id)}
                                   type="checkbox"
                                 />
                               </td>
-                              <td className="px-4 py-3">
+                              <td className="px-5 py-3.5">
                                 <div className="truncate font-medium text-ink-900" title={node.name}>
                                   {node.name}
                                 </div>
                               </td>
-                              <td className="px-4 py-3">
+                              <td className="px-5 py-3.5">
                                 <span
-                                  className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium ${protocolTone(node.protocol)}`}
+                                  className={`inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-medium ${protocolTone(node.protocol)}`}
                                 >
                                   {node.protocol}
                                 </span>
                               </td>
-                              <td className="min-w-0 px-4 py-3 text-ink-700">
+                              <td className="min-w-0 px-5 py-3.5 text-ink-700">
                                 <span
                                   className="mono-tabular block truncate"
                                   title={`${node.server}:${node.port}`}
@@ -705,34 +734,28 @@ export function SubscriptionsPage() {
                                   {node.server}:{node.port}
                                 </span>
                               </td>
-                              <td className="px-4 py-3">
-                                <span
-                                  className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium ${latencyTone(node.latency_ms)}`}
-                                >
-                                  {node.latency_ms != null
-                                    ? `${node.latency_ms} ms`
-                                    : text.latencyUnknown}
+                              <td className="px-5 py-3.5">
+                                <span className="inline-flex items-center gap-2">
+                                  <span
+                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${latencyDotTone(node.latency_ms)}`}
+                                  />
+                                  <span
+                                    className={`text-xs font-medium tabular-nums ${
+                                      node.latency_ms != null
+                                        ? "text-ink-700"
+                                        : "text-ink-400"
+                                    }`}
+                                  >
+                                    {node.latency_ms != null
+                                      ? `${node.latency_ms} ms`
+                                      : text.latencyUnknown}
+                                  </span>
                                 </span>
                               </td>
-                              <td className="px-4 py-3">
-                                <div className="flex max-w-48 flex-wrap gap-1">
-                                  {(node.tags ?? []).length > 0 ? (
-                                    (node.tags ?? []).map((tag) => (
-                                      <span
-                                        className="rounded-md border border-line bg-ink-50 px-1.5 py-0.5 text-[11px] text-ink-500"
-                                        key={`${node.id}-${tag}`}
-                                      >
-                                        {tag}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="text-ink-400">-</span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="table-action-cell px-4 py-3">
+                              <td className="px-5 py-3.5">
                                 <div className="flex justify-end">
                                   <Button
+                                    className="whitespace-nowrap"
                                     icon={<UploadCloud className="h-4 w-4" />}
                                     onClick={() => setApplyNodeId(node.id)}
                                     size="sm"
@@ -746,8 +769,7 @@ export function SubscriptionsPage() {
                         })}
                       </tbody>
                     </table>
-                    </div>
-                  </section>
+                  </div>
                 )}
               </div>
             </>

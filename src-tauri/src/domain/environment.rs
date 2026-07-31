@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub struct LastProxyTest {
+    pub ok: bool,
+    pub message: String,
+    pub status_code: Option<u16>,
+    pub ip: Option<String>,
+    pub timezone_id: Option<String>,
+    pub tested_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct Environment {
     pub id: String,
     pub name: String,
@@ -27,6 +38,7 @@ pub struct Environment {
     pub seed: Option<String>,
     pub headless: bool,
     pub start_url: Option<String>,
+    pub last_proxy_test: Option<LastProxyTest>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,

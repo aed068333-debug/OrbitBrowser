@@ -77,6 +77,12 @@ pub fn run(conn: &Connection, data_dir: &Path) -> rusqlite::Result<()> {
         "proxy_core_path",
         "ALTER TABLE settings ADD COLUMN proxy_core_path TEXT",
     )?;
+    ensure_column(
+        conn,
+        "environments",
+        "last_proxy_test_json",
+        "ALTER TABLE environments ADD COLUMN last_proxy_test_json TEXT",
+    )?;
 
     let now = Utc::now().to_rfc3339();
     conn.execute(

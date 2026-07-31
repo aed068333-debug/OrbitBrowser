@@ -1506,10 +1506,13 @@ textarea[data-code-editor="true"] {
   }
 
   .table-row-hover:hover {
-    background-color: rgb(var(--color-brand-800) / 0.08);
+    background-color: var(--table-row-hover-bg);
   }
 
   .hover\:bg-ink-50:hover,
+  .hover\:bg-ink-50\/60:hover,
+  .hover\:bg-ink-50\/70:hover,
+  .hover\:bg-ink-50\/80:hover,
   .hover\:bg-ink-100:hover,
   .hover\:bg-brand-50:hover {
     background-color: var(--hover-surface) !important;

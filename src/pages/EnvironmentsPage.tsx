@@ -255,6 +255,75 @@ function parseTagsText(value: string): string[] {
 }
 
 
+
+function formatLastProxyTest(
+  test: NonNullable<Environment["last_proxy_test"]>,
+  proxyResultText: (result: ProxyTestResult) => string,
+): string {
+  return proxyResultText({
+    ok: test.ok,
+    message: test.message,
+    status_code: test.status_code,
+    ip: test.ip,
+    timezone_id: test.timezone_id,
+  });
+}
+
+function resolveProxyResultText(
+  environment: Environment,
+  proxyResults: Record<string, string>,
+  proxyResultText: (result: ProxyTestResult) => string,
+): string | null {
+  if (proxyResults[environment.id]) {
+    return proxyResults[environment.id];
+  }
+  if (environment.last_proxy_test) {
+    return formatLastProxyTest(environment.last_proxy_test, proxyResultText);
+  }
+  return null;
+}
+
+function isProxyTestFailed(
+  environment: Environment,
+  proxyResults: Record<string, string>,
+  proxyReachableLabel: string,
+  proxyNotConfiguredLabel: string,
+): boolean {
+  // 优先用持久化 ok 字段；内存结果只在尚未刷新时兜底。
+  if (environment.last_proxy_test && !proxyResults[environment.id]) {
+    return !environment.last_proxy_test.ok;
+  }
+  const live = proxyResults[environment.id];
+  if (live) {
+    if (live === proxyNotConfiguredLabel) {
+      return false;
+    }
+    if (
+      live.includes(proxyReachableLabel) ||
+      live.startsWith("Proxy reachable") ||
+      live.startsWith("代理连通")
+    ) {
+      return false;
+    }
+    // 刚测完且后端 message 已是成功文案
+    if (environment.last_proxy_test?.ok && live === environment.last_proxy_test.message) {
+      return false;
+    }
+    return true;
+  }
+  if (environment.last_proxy_test) {
+    return !environment.last_proxy_test.ok;
+  }
+  return false;
+}
+
+function hasProxyTestResult(
+  environment: Environment,
+  proxyResults: Record<string, string>,
+): boolean {
+  return Boolean(proxyResults[environment.id] || environment.last_proxy_test);
+}
+
 function extractBoundSubscriptionNodeId(proxy: ProxyConfig): string | null {
   const username = proxy.username?.trim() ?? "";
   if (!username.startsWith("orbit-node:")) {
@@ -658,6 +727,15 @@ export function EnvironmentsPage() {
   });
 
   const proxyResultText = (result: ProxyTestResult) => {
+    if (!result.ok) {
+      return result.message;
+    }
+
+    // 后端已写入可读 message；有 status 时补一层本地文案，保证旧数据兼容。
+    if (result.message?.trim()) {
+      return result.message;
+    }
+
     const statusText = result.status_code
       ? format(text.proxyHttpStatus, { status: result.status_code })
       : "";
@@ -666,17 +744,13 @@ export function EnvironmentsPage() {
         ? [result.ip, result.timezone_id].filter(Boolean).join(" / ")
         : "";
 
-    if (result.ok && result.status_code) {
+    if (result.status_code || result.ip) {
       return [text.proxyReachable, routeText, statusText]
         .filter(Boolean)
         .join(" / ");
     }
 
-    if (result.ok) {
-      return text.proxyNotConfigured;
-    }
-
-    return result.message;
+    return text.proxyNotConfigured;
   };
 
   const testProxyMutation = useMutation({
@@ -687,12 +761,14 @@ export function EnvironmentsPage() {
         [environmentId]: proxyResultText(result),
       }));
       void queryClient.invalidateQueries({ queryKey: ["diagnostics"] });
+      invalidateEnvironments();
     },
     onError: (error, environmentId) => {
       setProxyResults((current) => ({
         ...current,
         [environmentId]: errorMessage(error),
       }));
+      invalidateEnvironments();
     },
   });
 
@@ -861,7 +937,6 @@ export function EnvironmentsPage() {
     >((acc, environment) => {
       const runtime = readRuntimeStatus(statusesQuery.data, environment.id);
       const proxy = normalizeProxy(environment);
-      const proxyResult = proxyResults[environment.id];
       const successRate = recentSuccessRate(environment, runs);
       const issues: string[] = [];
       const hasConfiguredChrome = Boolean(
@@ -883,14 +958,17 @@ export function EnvironmentsPage() {
       if (runtime.status === "crashed") {
         issues.push(text.health.crashed);
       }
-      if (proxy.kind !== "none" && !proxyResult) {
+      const hasTest = hasProxyTestResult(environment, proxyResults);
+      const proxyFailed = isProxyTestFailed(
+        environment,
+        proxyResults,
+        text.proxyReachable,
+        text.proxyNotConfigured,
+      );
+      if (proxy.kind !== "none" && !hasTest) {
         issues.push(text.health.proxyUntested);
       }
-      if (
-        proxy.kind !== "none" &&
-        proxyResult &&
-        !proxyResult.includes(text.proxyReachable)
-      ) {
+      if (proxy.kind !== "none" && hasTest && proxyFailed) {
         issues.push(text.health.proxyFailed);
       }
       if (successRate !== null && successRate < 0.6) {
@@ -929,6 +1007,7 @@ export function EnvironmentsPage() {
     settingsQuery.data?.chrome_path,
     statusesQuery.data,
     text.health,
+    text.proxyNotConfigured,
     text.proxyReachable,
   ]);
   const healthyCount = environments.filter(
@@ -1284,11 +1363,30 @@ export function EnvironmentsPage() {
                                     : `${text.fields.subscriptionProxyLabel}: ${proxy.password || "-"} (${text.fields.subscriptionProxyPending})`
                                   : `${proxy.kind}://${proxy.host ?? "-"}:${proxy.port ?? "-"}`}
                             </div>
-                            {proxyResults[environment.id] ? (
-                              <div className="mt-1 truncate text-xs text-ink-500">
-                                {proxyResults[environment.id]}
-                              </div>
-                            ) : null}
+                            {(() => {
+                              const resultText = resolveProxyResultText(
+                                environment,
+                                proxyResults,
+                                proxyResultText,
+                              );
+                              if (!resultText) {
+                                return null;
+                              }
+                              const testedAt =
+                                environment.last_proxy_test?.tested_at;
+                              return (
+                                <div
+                                  className="mt-1 truncate text-xs text-ink-500"
+                                  title={
+                                    testedAt
+                                      ? `${resultText} · ${new Date(testedAt).toLocaleString()}`
+                                      : resultText
+                                  }
+                                >
+                                  {resultText}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </td>
                         <td className="table-cell text-ink-700">

@@ -50,7 +50,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     return (
       <button
-        className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-40 ${sizeClass[size]} ${variantClass[variant]} ${className}`}
+        className={`inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-40 ${sizeClass[size]} ${variantClass[variant]} ${className}`}
         disabled={disabled}
         ref={ref}
         title={resolvedTitle}

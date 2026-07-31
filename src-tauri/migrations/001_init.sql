@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS environments (
   seed TEXT,
   headless INTEGER NOT NULL DEFAULT 0,
   start_url TEXT,
+  last_proxy_test_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT

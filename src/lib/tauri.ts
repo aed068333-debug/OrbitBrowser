@@ -284,7 +284,7 @@ function mockInvoke<TResult>(
       const environment = mockEnvironments.find((item) => item.id === args?.id);
       const proxyConfigured =
         environment?.proxy_config && environment.proxy_config.kind !== "none";
-      return {
+      const result = {
         ok: true,
         message: proxyConfigured
           ? language === "en-US"
@@ -294,9 +294,16 @@ function mockInvoke<TResult>(
             ? "No proxy configured"
             : "未配置代理",
         status_code: proxyConfigured ? 200 : null,
-        ip: null,
+        ip: proxyConfigured ? "1.2.3.4" : null,
         timezone_id: environment?.timezone_id ?? null,
-      } as TResult;
+      };
+      if (environment) {
+        environment.last_proxy_test = {
+          ...result,
+          tested_at: mockNow,
+        };
+      }
+      return result as TResult;
     }
     case COMMANDS.openEnvironmentProfileDir:
       return undefined as TResult;

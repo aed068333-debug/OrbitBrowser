@@ -1,5 +1,6 @@
 use crate::domain::environment::{
-    BrowserKind, BrowserSessionRecord, Environment, EnvironmentMode, SaveEnvironmentInput,
+    BrowserKind, BrowserSessionRecord, Environment, EnvironmentMode, LastProxyTest,
+    SaveEnvironmentInput,
 };
 use crate::domain::proxy::ProxyConfig;
 use crate::errors::{AppError, AppResult};
@@ -16,7 +17,7 @@ pub fn list(db: &Db) -> AppResult<Vec<Environment>> {
                profile_dir, proxy_config_json, locale, timezone_id, geolocation_latitude,
                geolocation_longitude, user_agent, platform, web_rtc_protection,
                viewport_width, viewport_height, device_scale_factor, environment_mode,
-               seed, headless, start_url, created_at, updated_at, deleted_at
+               seed, headless, start_url, last_proxy_test_json, created_at, updated_at, deleted_at
         FROM environments
         WHERE deleted_at IS NULL
         ORDER BY updated_at DESC
@@ -35,7 +36,7 @@ pub fn get(db: &Db, id: &str) -> AppResult<Environment> {
                profile_dir, proxy_config_json, locale, timezone_id, geolocation_latitude,
                geolocation_longitude, user_agent, platform, web_rtc_protection,
                viewport_width, viewport_height, device_scale_factor, environment_mode,
-               seed, headless, start_url, created_at, updated_at, deleted_at
+               seed, headless, start_url, last_proxy_test_json, created_at, updated_at, deleted_at
         FROM environments
         WHERE id = ?1 AND deleted_at IS NULL
         "#,
@@ -78,9 +79,9 @@ pub fn save(db: &Db, mut input: SaveEnvironmentInput) -> AppResult<Environment> 
           profile_dir, proxy_config_json, locale, timezone_id, geolocation_latitude,
           geolocation_longitude, user_agent, platform, web_rtc_protection,
           viewport_width, viewport_height, device_scale_factor, environment_mode,
-          seed, headless, start_url, created_at, updated_at, deleted_at
+          seed, headless, start_url, last_proxy_test_json, created_at, updated_at, deleted_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, NULL)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, NULL, ?24, ?25, NULL)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           group_id = excluded.group_id,
@@ -103,6 +104,11 @@ pub fn save(db: &Db, mut input: SaveEnvironmentInput) -> AppResult<Environment> 
           seed = excluded.seed,
           headless = excluded.headless,
           start_url = excluded.start_url,
+          last_proxy_test_json = CASE
+            WHEN environments.proxy_config_json = excluded.proxy_config_json
+              THEN environments.last_proxy_test_json
+            ELSE NULL
+          END,
           updated_at = excluded.updated_at,
           deleted_at = NULL
         "#,
@@ -306,9 +312,10 @@ fn row_to_environment(row: &Row<'_>) -> rusqlite::Result<Environment> {
         seed: row.get(20)?,
         headless: row.get(21)?,
         start_url: row.get(22)?,
-        created_at: row.get(23)?,
-        updated_at: row.get(24)?,
-        deleted_at: row.get(25)?,
+        last_proxy_test: parse_last_proxy_test(row.get(23)?),
+        created_at: row.get(24)?,
+        updated_at: row.get(25)?,
+        deleted_at: row.get(26)?,
     })
 }
 
@@ -382,6 +389,41 @@ fn browser_kind_to_str(value: &BrowserKind) -> &'static str {
         BrowserKind::Chrome => "chrome",
         BrowserKind::Camoufox => "camoufox",
     }
+}
+
+
+fn parse_last_proxy_test(value: Option<String>) -> Option<LastProxyTest> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .and_then(|item| serde_json::from_str(item).ok())
+}
+
+pub fn update_last_proxy_test(
+    db: &Db,
+    environment_id: &str,
+    test: &LastProxyTest,
+) -> AppResult<Environment> {
+    let conn = db.connect()?;
+    let json = serde_json::to_string(test)?;
+    let now = Utc::now().to_rfc3339();
+    let affected = conn.execute(
+        r#"
+        UPDATE environments
+        SET last_proxy_test_json = ?1,
+            updated_at = ?2
+        WHERE id = ?3 AND deleted_at IS NULL
+        "#,
+        params![json, now, environment_id],
+    )?;
+    if affected == 0 {
+        return Err(AppError::new(
+            "environment_not_found",
+            "Environment does not exist or was deleted",
+        ));
+    }
+    get(db, environment_id)
 }
 
 fn parse_browser_kind(value: &str) -> BrowserKind {

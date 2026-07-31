@@ -6,6 +6,7 @@ use crate::browser::{
     process_manager, profile_manager, runtime_page, timezone_controller,
 };
 use crate::domain::environment::{
+    LastProxyTest,
     BrowserKind, BrowserSessionRecord, Environment, EnvironmentRuntimeStatus, RuntimeStatus,
     SaveEnvironmentInput,
 };
@@ -739,39 +740,95 @@ pub async fn test_environment_proxy(
     )?;
     if env.proxy_config.chrome_server().is_none() {
         if env.proxy_config.is_subscription_binding() {
-            return Err(AppError::new(
+            let err = AppError::new(
                 "proxy_core_start_failed",
                 "Subscription node proxy is not ready. Orbit will try to download managed Xray automatically; check network or set ORBIT_PROXY_CORE, then retry.",
             )
-            .retryable(true));
+            .retryable(true);
+            let _ = environment_repo::update_last_proxy_test(
+                state.db(),
+                &id,
+                &LastProxyTest {
+                    ok: false,
+                    message: err.message.clone(),
+                    status_code: None,
+                    ip: None,
+                    timezone_id: None,
+                    tested_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            return Err(err);
         }
-        return Ok(ProxyTestResult {
+        let result = ProxyTestResult {
             ok: true,
             message: "No proxy configured".to_string(),
             status_code: None,
             ip: None,
-            timezone_id: env.timezone_id,
-        });
+            timezone_id: env.timezone_id.clone(),
+        };
+        let _ = environment_repo::update_last_proxy_test(
+            state.db(),
+            &id,
+            &LastProxyTest {
+                ok: true,
+                message: result.message.clone(),
+                status_code: None,
+                ip: None,
+                timezone_id: result.timezone_id.clone(),
+                tested_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+        return Ok(result);
     }
 
-    let probe = probe_proxy(&env.proxy_config, Duration::from_secs(8)).await?;
-    let timezone_text = probe
-        .timezone_id
-        .as_deref()
-        .map(|timezone_id| format!(" ({timezone_id})"))
-        .unwrap_or_default();
-
-    Ok(ProxyTestResult {
-        ok: true,
-        message: if let Some(ip) = probe.ip.as_deref() {
-            format!("Proxy reachable: {ip}{timezone_text}")
-        } else {
-            format!("Proxy reachable{timezone_text}")
-        },
-        status_code: probe.status_code,
-        ip: probe.ip,
-        timezone_id: probe.timezone_id,
-    })
+    match probe_proxy(&env.proxy_config, Duration::from_secs(8)).await {
+        Ok(probe) => {
+            let timezone_text = probe
+                .timezone_id
+                .as_deref()
+                .map(|timezone_id| format!(" ({timezone_id})"))
+                .unwrap_or_default();
+            let result = ProxyTestResult {
+                ok: true,
+                message: if let Some(ip) = probe.ip.as_deref() {
+                    format!("Proxy reachable: {ip}{timezone_text}")
+                } else {
+                    format!("Proxy reachable{timezone_text}")
+                },
+                status_code: probe.status_code,
+                ip: probe.ip.clone(),
+                timezone_id: probe.timezone_id.clone(),
+            };
+            let _ = environment_repo::update_last_proxy_test(
+                state.db(),
+                &id,
+                &LastProxyTest {
+                    ok: true,
+                    message: result.message.clone(),
+                    status_code: result.status_code,
+                    ip: result.ip.clone(),
+                    timezone_id: result.timezone_id.clone(),
+                    tested_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            Ok(result)
+        }
+        Err(err) => {
+            let _ = environment_repo::update_last_proxy_test(
+                state.db(),
+                &id,
+                &LastProxyTest {
+                    ok: false,
+                    message: err.message.clone(),
+                    status_code: None,
+                    ip: None,
+                    timezone_id: None,
+                    tested_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            Err(err)
+        }
+    }
 }
 
 async fn resolve_runtime_fingerprint(env: &Environment) -> RuntimeFingerprint {

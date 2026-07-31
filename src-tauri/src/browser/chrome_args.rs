@@ -303,6 +303,7 @@ mod tests {
             seed: None,
             headless: false,
             start_url: Some("about:blank".to_string()),
+            last_proxy_test: None,
             created_at: "2026-06-17T00:00:00Z".to_string(),
             updated_at: "2026-06-17T00:00:00Z".to_string(),
             deleted_at: None,

@@ -72,6 +72,15 @@ export interface ProxyConfig {
   bypass_list?: string[];
 }
 
+export interface LastProxyTest {
+  ok: boolean;
+  message: string;
+  status_code?: number | null;
+  ip?: string | null;
+  timezone_id?: string | null;
+  tested_at: string;
+}
+
 export interface Environment {
   id: string;
   name: string;
@@ -98,6 +107,7 @@ export interface Environment {
   seed?: string | null;
   headless: boolean;
   start_url?: string | null;
+  last_proxy_test?: LastProxyTest | null;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;

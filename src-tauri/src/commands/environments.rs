@@ -5,14 +5,13 @@ use crate::browser::{
     camoufox_locator, camoufox_runtime, cdp_client, chrome_args, chrome_locator, port_allocator,
     process_manager, profile_manager, runtime_page, timezone_controller,
 };
+use crate::commands::subscriptions;
 use crate::domain::environment::{
-    LastProxyTest,
-    BrowserKind, BrowserSessionRecord, Environment, EnvironmentRuntimeStatus, RuntimeStatus,
-    SaveEnvironmentInput,
+    BrowserKind, BrowserSessionRecord, Environment, EnvironmentRuntimeStatus, LastProxyTest,
+    RuntimeStatus, SaveEnvironmentInput,
 };
 use crate::domain::proxy::ProxyConfig;
 use crate::errors::{AppError, AppResult};
-use crate::commands::subscriptions;
 use crate::storage::{environment_repo, legacy_cleanup, run_repo, settings_repo};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -151,7 +150,10 @@ async fn start_environment_inner_with_options(
     let profile_dir_text = profile_dir.to_string_lossy().to_string();
 
     if let Some(session) = state.sessions().get(&id) {
-        if runtime_pid_matches(&env, session.pid, &profile_dir_text) {
+        if runtime_pid_matches(&env, session.pid, &profile_dir_text)
+            && (!matches!(env.browser_kind, BrowserKind::Camoufox)
+                || runtime_page::camoufox_ping(session.cdp_port).await)
+        {
             let restart_headed = launch_mode == BrowserLaunchMode::Headed
                 && process_manager::pid_command_contains(session.pid, "--headless");
             let restart_legacy_chrome =
@@ -187,7 +189,21 @@ async fn start_environment_inner_with_options(
                 });
             }
         } else {
-            state.sessions().remove(&id);
+            if runtime_pid_matches(&env, session.pid, &profile_dir_text)
+                && matches!(env.browser_kind, BrowserKind::Camoufox)
+            {
+                stop_environment_inner(state, &id)?;
+                if !wait_for_process_exit(session.pid).await {
+                    return Err(AppError::new(
+                        "profile_locked",
+                        "Camoufox did not exit in time while recovering a stale runtime",
+                    )
+                    .details(json!({ "pid": session.pid, "profileDir": profile_dir_text }))
+                    .retryable(true));
+                }
+            } else {
+                state.sessions().remove(&id);
+            }
         }
     }
 
@@ -195,7 +211,10 @@ async fn start_environment_inner_with_options(
         if record.environment_id != id {
             continue;
         }
-        if runtime_pid_matches(&env, record.pid, &profile_dir_text) {
+        if runtime_pid_matches(&env, record.pid, &profile_dir_text)
+            && (!matches!(env.browser_kind, BrowserKind::Camoufox)
+                || runtime_page::camoufox_ping(record.cdp_port).await)
+        {
             let restart_headed = launch_mode == BrowserLaunchMode::Headed
                 && process_manager::pid_command_contains(record.pid, "--headless");
             let restart_legacy_chrome =
@@ -238,6 +257,18 @@ async fn start_environment_inner_with_options(
                     message: Some("Environment is already running".to_string()),
                 });
             }
+        } else if runtime_pid_matches(&env, record.pid, &profile_dir_text)
+            && matches!(env.browser_kind, BrowserKind::Camoufox)
+        {
+            stop_environment_inner(state, &id)?;
+            if !wait_for_process_exit(record.pid).await {
+                return Err(AppError::new(
+                    "profile_locked",
+                    "Camoufox did not exit in time while recovering a stale persisted runtime",
+                )
+                .details(json!({ "pid": record.pid, "profileDir": profile_dir_text }))
+                .retryable(true));
+            }
         } else {
             environment_repo::delete_session_record(state.db(), &id)?;
         }
@@ -254,11 +285,29 @@ async fn start_environment_inner_with_options(
                 .retryable(true));
             }
 
+            let camoufox_runtime_healthy = !matches!(env.browser_kind, BrowserKind::Camoufox)
+                || runtime_page::camoufox_ping(lock.cdp_port).await;
             let restart_headed = launch_mode == BrowserLaunchMode::Headed
                 && process_manager::pid_command_contains(lock.pid, "--headless");
             let restart_legacy_chrome =
                 chrome_process_uses_legacy_fingerprint_flags(&env, lock.pid);
-            if restart_headed || restart_legacy_chrome {
+            if !camoufox_runtime_healthy {
+                tracing::info!(
+                    environment_id = id,
+                    pid = lock.pid,
+                    cdp_port = lock.cdp_port,
+                    "Recovering locked Camoufox whose page is no longer available"
+                );
+                stop_environment_inner(state, &id)?;
+                if !wait_for_process_exit(lock.pid).await {
+                    return Err(AppError::new(
+                        "profile_locked",
+                        "Camoufox did not exit in time while recovering a stale locked runtime",
+                    )
+                    .details(json!({ "pid": lock.pid, "profileDir": profile_dir_text }))
+                    .retryable(true));
+                }
+            } else if restart_headed || restart_legacy_chrome {
                 tracing::info!(
                     environment_id = id,
                     pid = lock.pid,

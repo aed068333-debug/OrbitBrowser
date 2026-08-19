@@ -4,12 +4,16 @@ use crate::domain::subscription::{
 };
 use crate::errors::{AppError, AppResult};
 use crate::proxy::{core_installer, port_allocator};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use sysinfo::{Pid, System};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoreKind {
@@ -32,13 +36,36 @@ struct ManagedLocalProxy {
     child: Child,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct LocalProxyProcessRecord {
+    pid: u32,
+    port: u16,
+    core_kind: String,
+    core_path: String,
+    config_path: String,
+}
+
+struct ProcessStartLock {
+    path: PathBuf,
+}
+
+impl Drop for ProcessStartLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn registry() -> &'static Mutex<HashMap<String, ManagedLocalProxy>> {
     static REGISTRY: OnceLock<Mutex<HashMap<String, ManagedLocalProxy>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub async fn ensure_core_installed(override_path: Option<&str>) -> AppResult<ProxyCoreStatus> {
-    if let Some(path) = override_path.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(path) = override_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return Ok(detect_core(Some(path)));
     }
     let status = detect_core(None);
@@ -50,7 +77,10 @@ pub async fn ensure_core_installed(override_path: Option<&str>) -> AppResult<Pro
 }
 
 pub fn detect_core(override_path: Option<&str>) -> ProxyCoreStatus {
-    if let Some(path) = override_path.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(path) = override_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         match inspect_core_path(Path::new(path)) {
             Ok((kind, version)) => {
                 return ProxyCoreStatus {
@@ -106,7 +136,6 @@ pub fn detect_core(override_path: Option<&str>) -> ProxyCoreStatus {
     }
 }
 
-
 fn futures_executor_block_on_install() -> AppResult<PathBuf> {
     // Avoid Handle::block_on inside an existing runtime; spawn a dedicated runtime thread.
     let (tx, rx) = std::sync::mpsc::channel();
@@ -121,6 +150,43 @@ fn futures_executor_block_on_install() -> AppResult<PathBuf> {
         )
         .retryable(true)
     })?
+}
+
+fn acquire_process_start_lock(path: PathBuf) -> AppResult<ProcessStartLock> {
+    for _ in 0..100 {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let _ = writeln!(file, "{}", std::process::id());
+                return Ok(ProcessStartLock { path });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                let owner_alive = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok())
+                    .is_some_and(process_alive_pid);
+                if !owner_alive {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                return Err(AppError::new(
+                    "proxy_core_lock_failed",
+                    format!("Failed to create proxy core start lock: {err}"),
+                )
+                .details(json!({ "lockPath": path }))
+                .retryable(true));
+            }
+        }
+    }
+
+    Err(AppError::new(
+        "proxy_core_lock_failed",
+        "Timed out waiting for another proxy core start to finish",
+    )
+    .details(json!({ "lockPath": path }))
+    .retryable(true))
 }
 
 pub fn ensure_local_proxy_for_node(
@@ -161,10 +227,18 @@ pub fn ensure_local_proxy_for_node(
         });
     }
 
+    let config_dir = data_dir.join("runtime").join("proxy-cores").join(&node.id);
+    std::fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("config.json");
+    let process_record_path = config_dir.join("process.json");
+
     {
-        let mut guard = registry()
-            .lock()
-            .map_err(|_| AppError::new("proxy_core_lock_failed", "Failed to lock proxy core registry"))?;
+        let mut guard = registry().lock().map_err(|_| {
+            AppError::new(
+                "proxy_core_lock_failed",
+                "Failed to lock proxy core registry",
+            )
+        })?;
         if let Some(existing) = guard.get_mut(&node.id) {
             if process_alive(&mut existing.child) {
                 return Ok(existing.endpoint.clone());
@@ -175,8 +249,18 @@ pub fn ensure_local_proxy_for_node(
         }
     }
 
+    let _start_lock = acquire_process_start_lock(config_dir.join(".start.lock"))?;
+    if let Some(endpoint) = reuse_persisted_local_proxy(&process_record_path, &config_path, node)? {
+        return Ok(endpoint);
+    }
+
     let mut detection = detect_core(core_override);
-    if detection.path.is_none() && core_override.map(str::trim).filter(|v| !v.is_empty()).is_none() {
+    if detection.path.is_none()
+        && core_override
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .is_none()
+    {
         // 自动下载并内置 xray 到应用数据目录。
         match futures_executor_block_on_install() {
             Ok(path) => {
@@ -202,24 +286,25 @@ pub fn ensure_local_proxy_for_node(
         _ => CoreKind::Xray,
     };
 
+    // 旧版本没有持久化 core PID；清理所有仍引用该节点配置的孤儿进程，
+    // 防止它们在应用重启后继续占用资源并与新入口混淆。
+    terminate_matching_core_processes(&config_path);
+
     let local_port = port_allocator::allocate()?;
-    let config_dir = data_dir.join("runtime").join("proxy-cores").join(&node.id);
-    std::fs::create_dir_all(&config_dir)?;
-    let config_path = match core_kind {
+    match core_kind {
         CoreKind::Xray => {
-            let path = config_dir.join("config.json");
-            std::fs::write(&path, serde_json::to_vec_pretty(&build_xray_config(node, local_port)?)?)?;
-            path
+            std::fs::write(
+                &config_path,
+                serde_json::to_vec_pretty(&build_xray_config(node, local_port)?)?,
+            )?;
         }
         CoreKind::SingBox => {
-            let path = config_dir.join("config.json");
             std::fs::write(
-                &path,
+                &config_path,
                 serde_json::to_vec_pretty(&build_singbox_config(node, local_port)?)?,
             )?;
-            path
         }
-    };
+    }
 
     let mut command = Command::new(&core_path);
     match core_kind {
@@ -277,6 +362,27 @@ pub fn ensure_local_proxy_for_node(
         .retryable(true));
     }
 
+    let process_record = LocalProxyProcessRecord {
+        pid: child.id(),
+        port: local_port,
+        core_kind: core_kind.as_str().to_string(),
+        core_path: core_path.clone(),
+        config_path: config_path.to_string_lossy().to_string(),
+    };
+    if let Err(err) = std::fs::write(
+        &process_record_path,
+        serde_json::to_vec_pretty(&process_record)?,
+    ) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(AppError::new(
+            "proxy_core_start_failed",
+            format!("Failed to persist local proxy process state: {err}"),
+        )
+        .details(json!({ "processRecord": process_record_path }))
+        .retryable(true));
+    }
+
     let endpoint = LocalProxyEndpoint {
         host: "127.0.0.1".to_string(),
         port: local_port,
@@ -287,9 +393,12 @@ pub fn ensure_local_proxy_for_node(
         config_path: config_path.to_string_lossy().to_string(),
     };
 
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| AppError::new("proxy_core_lock_failed", "Failed to lock proxy core registry"))?;
+    let mut guard = registry().lock().map_err(|_| {
+        AppError::new(
+            "proxy_core_lock_failed",
+            "Failed to lock proxy core registry",
+        )
+    })?;
     guard.insert(
         node.id.clone(),
         ManagedLocalProxy {
@@ -302,14 +411,171 @@ pub fn ensure_local_proxy_for_node(
 
 #[allow(dead_code)]
 pub fn stop_local_proxy(node_id: &str) -> AppResult<()> {
-    let mut guard = registry()
-        .lock()
-        .map_err(|_| AppError::new("proxy_core_lock_failed", "Failed to lock proxy core registry"))?;
+    let mut guard = registry().lock().map_err(|_| {
+        AppError::new(
+            "proxy_core_lock_failed",
+            "Failed to lock proxy core registry",
+        )
+    })?;
     if let Some(mut managed) = guard.remove(node_id) {
+        let process_record_path = Path::new(&managed.endpoint.config_path)
+            .parent()
+            .map(|path| path.join("process.json"));
         let _ = managed.child.kill();
         let _ = managed.child.wait();
+        if let Some(path) = process_record_path {
+            let _ = std::fs::remove_file(path);
+        }
     }
     Ok(())
+}
+
+/// Stop a node core even when it was started by an earlier application process.
+///
+/// Keep `stop_local_proxy` unchanged for callers that only have the in-memory
+/// registry; this variant has the data directory needed to locate the durable
+/// process record after an application restart.
+pub fn stop_local_proxy_for_data_dir(data_dir: &Path, node_id: &str) -> AppResult<()> {
+    let config_dir = data_dir.join("runtime").join("proxy-cores").join(node_id);
+    if config_dir.exists() {
+        let _start_lock = acquire_process_start_lock(config_dir.join(".start.lock"))?;
+        stop_local_proxy(node_id)?;
+        stop_persisted_process_record(&config_dir.join("process.json"))?;
+    } else {
+        stop_local_proxy(node_id)?;
+    }
+    Ok(())
+}
+
+fn stop_persisted_process_record(process_record_path: &Path) -> AppResult<()> {
+    let record = match std::fs::read_to_string(process_record_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<LocalProxyProcessRecord>(&text).ok())
+    {
+        Some(record) => record,
+        None => {
+            let _ = std::fs::remove_file(process_record_path);
+            return Ok(());
+        }
+    };
+
+    let verified = process_alive_pid(record.pid)
+        && process_command_contains(record.pid, &record.config_path)
+        && process_command_contains(record.pid, &record.core_path);
+    if verified {
+        if let Some(process) = System::new_all().process(Pid::from_u32(record.pid)) {
+            let _ = process.kill();
+        }
+        for _ in 0..20 {
+            if !process_alive_pid(record.pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let _ = std::fs::remove_file(process_record_path);
+    Ok(())
+}
+
+fn reuse_persisted_local_proxy(
+    process_record_path: &Path,
+    config_path: &Path,
+    node: &ProxySubscriptionNode,
+) -> AppResult<Option<LocalProxyEndpoint>> {
+    let Some(text) = std::fs::read_to_string(process_record_path).ok() else {
+        return Ok(None);
+    };
+    let Ok(record) = serde_json::from_str::<LocalProxyProcessRecord>(&text) else {
+        let _ = std::fs::remove_file(process_record_path);
+        return Ok(None);
+    };
+
+    let config_text = config_path.to_string_lossy();
+    let valid = record.config_path == config_text
+        && process_alive_pid(record.pid)
+        && process_command_contains(record.pid, &record.config_path)
+        && process_command_contains(record.pid, &record.core_path)
+        && port_is_open(record.port);
+    if !valid {
+        let _ = std::fs::remove_file(process_record_path);
+        return Ok(None);
+    }
+
+    // A valid record identifies the process to keep; remove any duplicate
+    // workers left behind with the same node configuration.
+    terminate_matching_core_processes_except(config_path, Some(record.pid));
+
+    Ok(Some(LocalProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: record.port,
+        kind: ProxyKind::Socks5,
+        node_id: node.id.clone(),
+        node_name: node.name.clone(),
+        core_kind: record.core_kind,
+        config_path: record.config_path,
+    }))
+}
+
+fn process_alive_pid(pid: u32) -> bool {
+    System::new_all().process(Pid::from_u32(pid)).is_some()
+}
+
+fn process_command_contains(pid: u32, needle: &str) -> bool {
+    System::new_all()
+        .process(Pid::from_u32(pid))
+        .map(|process| {
+            process
+                .cmd()
+                .iter()
+                .map(|part| part.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains(needle)
+        })
+        .unwrap_or(false)
+}
+
+fn port_is_open(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(500),
+    )
+    .is_ok()
+}
+
+fn terminate_matching_core_processes(config_path: &Path) {
+    terminate_matching_core_processes_except(config_path, None);
+}
+
+fn terminate_matching_core_processes_except(config_path: &Path, keep_pid: Option<u32>) {
+    let needle = config_path.to_string_lossy().to_string();
+    let system = System::new_all();
+    let pids = system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            let command = process
+                .cmd()
+                .iter()
+                .map(|part| part.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            (Some(pid.as_u32()) != keep_pid && command.contains(&needle)).then_some(pid.as_u32())
+        })
+        .collect::<Vec<_>>();
+    for pid in &pids {
+        if let Some(process) = system.process(Pid::from_u32(*pid)) {
+            let _ = process.kill();
+        }
+    }
+    for pid in &pids {
+        for _ in 0..10 {
+            if !process_alive_pid(*pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 fn build_xray_config(node: &ProxySubscriptionNode, local_port: u16) -> AppResult<Value> {
@@ -322,7 +588,9 @@ fn build_xray_config(node: &ProxySubscriptionNode, local_port: u16) -> AppResult
         other => {
             return Err(AppError::new(
                 "subscription_unsupported",
-                format!("Protocol {other:?} requires a local core path that is not configured for xray"),
+                format!(
+                    "Protocol {other:?} requires a local core path that is not configured for xray"
+                ),
             ));
         }
     };
@@ -396,10 +664,7 @@ fn build_xray_vless_outbound(config: &Value) -> AppResult<Value> {
     let server = required_str(config, "server")?;
     let port = required_u16(config, "port")?;
     let uuid = required_str(config, "uuid")?;
-    let network = config
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("tcp");
+    let network = config.get("type").and_then(Value::as_str).unwrap_or("tcp");
     let security = config
         .get("security")
         .and_then(Value::as_str)
@@ -439,7 +704,11 @@ fn build_xray_vless_outbound(config: &Value) -> AppResult<Value> {
             "allowInsecure": true,
         });
         if let Some(alpn) = config.get("alpn").and_then(Value::as_str) {
-            tls["alpn"] = json!(alpn.split(',').map(str::trim).filter(|item| !item.is_empty()).collect::<Vec<_>>());
+            tls["alpn"] = json!(alpn
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>());
         }
         stream["tlsSettings"] = tls;
     } else if security == "reality" {
@@ -451,7 +720,11 @@ fn build_xray_vless_outbound(config: &Value) -> AppResult<Value> {
             "spiderX": config.get("spx").and_then(Value::as_str).unwrap_or(""),
         });
         if let Some(alpn) = config.get("alpn").and_then(Value::as_str) {
-            reality["alpn"] = json!(alpn.split(',').map(str::trim).filter(|item| !item.is_empty()).collect::<Vec<_>>());
+            reality["alpn"] = json!(alpn
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>());
         }
         stream["security"] = json!("reality");
         stream["realitySettings"] = reality;
@@ -472,8 +745,7 @@ fn build_xray_vless_outbound(config: &Value) -> AppResult<Value> {
 }
 
 fn build_xray_vmess_outbound(config: &Value) -> AppResult<Value> {
-    let server = required_str(config, "server")
-        .or_else(|_| required_str(config, "add"))?;
+    let server = required_str(config, "server").or_else(|_| required_str(config, "add"))?;
     let port = required_u16(config, "port")?;
     let uuid = required_str(config, "id")?;
     let network = config
@@ -573,7 +845,11 @@ fn build_singbox_vless_outbound(config: &Value) -> AppResult<Value> {
         "uuid": required_str(config, "uuid")?,
         "packet_encoding": "xudp"
     });
-    if let Some(flow) = config.get("flow").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+    if let Some(flow) = config
+        .get("flow")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
         outbound["flow"] = json!(flow);
     }
     attach_singbox_transport(&mut outbound, config);
@@ -718,7 +994,10 @@ fn truthy(value: Option<&Value>) -> bool {
 
 fn inspect_core_path(path: &Path) -> AppResult<(CoreKind, String)> {
     if !path.exists() {
-        return Err(AppError::new("proxy_core_not_found", "Proxy core path does not exist"));
+        return Err(AppError::new(
+            "proxy_core_not_found",
+            "Proxy core path does not exist",
+        ));
     }
     let file_name = path
         .file_name()
@@ -791,7 +1070,10 @@ fn default_core_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(path));
     }
     if let Some(data_dir) = dirs::data_dir() {
-        let runtime = data_dir.join("com.orbit.browser").join("runtime").join("proxy-core");
+        let runtime = data_dir
+            .join("com.orbit.browser")
+            .join("runtime")
+            .join("proxy-core");
         candidates.push(runtime.join("xray"));
         candidates.push(runtime.join("xray.exe"));
         candidates.push(runtime.join("sing-box"));
@@ -822,7 +1104,6 @@ fn process_alive(child: &mut Child) -> bool {
         _ => false,
     }
 }
-
 
 fn wait_for_port(port: u16, timeout: Duration) -> AppResult<()> {
     let started = std::time::Instant::now();

@@ -16,6 +16,7 @@ from pathlib import Path
 
 running = True
 ready = False
+page_available = False
 requests = queue.Queue()
 events = queue.Queue()
 
@@ -73,10 +74,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/health":
             self.send_error(404)
             return
-        self.send_response(200 if ready else 503)
+        healthy = ready and page_available
+        self.send_response(200 if healthy else 503)
         self.send_header("content-type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps({"ok": ready}).encode("utf-8"))
+        self.wfile.write(
+            json.dumps({"ok": healthy, "page_available": page_available}).encode("utf-8")
+        )
 
     def do_POST(self):
         if self.path != "/rpc":
@@ -352,10 +356,14 @@ def drain_requests(page):
             response.put({"ok": True, "value": execute_action(page, payload)})
         except Exception as exc:
             response.put({"ok": False, "error": str(exc)})
+            if page.is_closed() or "TargetClosed" in str(exc) or "target page" in str(exc).lower():
+                global ready, page_available
+                ready = False
+                page_available = False
         processed += 1
 
 def main():
-    global ready
+    global ready, page_available
     if len(sys.argv) != 2:
         print("usage: orbit_camoufox_worker.py <profile.json>", file=sys.stderr)
         return 64
@@ -381,20 +389,41 @@ def main():
         page = browser.pages[0] if browser.pages else browser.new_page()
         install_recorders(page)
         start_url = profile.get("start_url") or "about:blank"
-        if start_url:
-            page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-        cjk_preflight(page, profile.get("locale"))
+        try:
+            if start_url:
+                page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+            cjk_preflight(page, profile.get("locale"))
+        except Exception as exc:
+            ready = False
+            page_available = False
+            print(
+                f"Camoufox initial navigation failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        page_available = not page.is_closed()
+        if not page_available:
+            print("Camoufox initial page closed before becoming ready", file=sys.stderr)
+            return 1
         ready = True
         print(json.dumps({"event": "ready"}), flush=True)
         while running:
             open_pages = [candidate for candidate in browser.pages if not candidate.is_closed()]
             if not open_pages:
+                ready = False
+                page_available = False
                 break
             if page.is_closed():
                 page = open_pages[0]
+            page_available = not page.is_closed()
+            if not page_available:
+                ready = False
+                break
             if drain_requests(page) == 0:
                 time.sleep(0.05)
         ready = False
+        page_available = False
     server.shutdown()
     return 0
 
@@ -598,9 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn worker_stops_after_the_last_page_closes() {
+    fn worker_health_tracks_page_liveness() {
+        assert!(WORKER_SCRIPT.contains("page_available = False"));
+        assert!(WORKER_SCRIPT.contains("healthy = ready and page_available"));
         assert!(WORKER_SCRIPT.contains("if not open_pages:"));
-        assert!(WORKER_SCRIPT.contains("ready = False"));
+        assert!(WORKER_SCRIPT.contains("Camoufox initial navigation failed"));
     }
 
     #[test]
@@ -640,13 +671,13 @@ mod tests {
 
     #[test]
     fn cjk_fonts_are_only_injected_for_cjk_locales() {
-        let with_zh = json!({"locale": "zh-CN", "cjk_fonts": cjk_font_families_for_locale("zh-CN")});
-        assert!(
-            with_zh["cjk_fonts"]
-                .as_array()
-                .is_some_and(|families| !families.is_empty())
-        );
-        let with_en = json!({"locale": "en-US", "cjk_fonts": cjk_font_families_for_locale("en-US")});
+        let with_zh =
+            json!({"locale": "zh-CN", "cjk_fonts": cjk_font_families_for_locale("zh-CN")});
+        assert!(with_zh["cjk_fonts"]
+            .as_array()
+            .is_some_and(|families| !families.is_empty()));
+        let with_en =
+            json!({"locale": "en-US", "cjk_fonts": cjk_font_families_for_locale("en-US")});
         assert!(with_en["cjk_fonts"].is_null());
     }
 
@@ -670,10 +701,8 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::time::{Duration, Instant};
 
-        let data_dir = std::env::temp_dir().join(format!(
-            "orbit-camoufox-smoke-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let data_dir =
+            std::env::temp_dir().join(format!("orbit-camoufox-smoke-{}", uuid::Uuid::new_v4()));
         let profile_dir = data_dir.join("profile");
         std::fs::create_dir_all(&profile_dir)?;
         let control_port = crate::browser::port_allocator::allocate()?;
@@ -751,9 +780,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data_dir);
 
         if let Some(status) = early_exit {
-            panic!(
-                "worker exited before ready with {status}; log:\n{log_text}"
-            );
+            panic!("worker exited before ready with {status}; log:\n{log_text}");
         }
         assert!(ready, "worker did not become ready; log:\n{log_text}");
         assert!(

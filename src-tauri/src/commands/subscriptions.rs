@@ -78,6 +78,16 @@ pub fn save_proxy_subscription(
 
 #[tauri::command]
 pub fn delete_proxy_subscription(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let nodes = subscription_repo::list_nodes(state.db(), Some(&id))?;
+    for node in nodes {
+        if let Err(err) = core_manager::stop_local_proxy_for_data_dir(state.data_dir(), &node.id) {
+            tracing::warn!(
+                node_id = %node.id,
+                error = %err,
+                "Failed to stop subscription node proxy while deleting subscription"
+            );
+        }
+    }
     subscription_repo::delete_subscription(state.db(), &id)
 }
 

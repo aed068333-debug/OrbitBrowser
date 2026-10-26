@@ -505,8 +505,16 @@ function readNumber(
 function importRowsToDrafts(
   rows: Array<Record<string, unknown>>,
   base: EnvironmentDraft,
+  existingEnvironments: Environment[],
 ): ImportPreview {
   const errors: string[] = [];
+  const existingNames = new Map(
+    existingEnvironments.map((environment) => [
+      environment.name.trim().toLocaleLowerCase(),
+      environment.id,
+    ]),
+  );
+  const seenNames = new Set<string>();
   const drafts = rows
     .map((row, index) => {
       const name = readText(row, ["name", "名称"]);
@@ -514,11 +522,32 @@ function importRowsToDrafts(
         errors.push(`Row ${index + 1}: name is required`);
         return null;
       }
+      const normalizedName = name.toLocaleLowerCase();
+      const importedId = readText(row, ["id"]);
+      if (seenNames.has(normalizedName)) {
+        errors.push(`Row ${index + 1}: duplicate name in import: ${name}`);
+        return null;
+      }
+      seenNames.add(normalizedName);
+      const existingId = existingNames.get(normalizedName);
+      if (existingId && existingId !== importedId) {
+        errors.push(`Row ${index + 1}: name already exists: ${name}`);
+        return null;
+      }
       const proxyKind = normalizeProxyKind(
         readText(row, ["proxy_kind", "proxy", "代理类型"]),
       );
       const proxyHost = readText(row, ["proxy_host", "host", "代理主机"]);
+      const proxyPortText = readText(row, ["proxy_port", "port", "代理端口"]);
       const proxyPort = readNumber(row, ["proxy_port", "port", "代理端口"]);
+      if (proxyKind !== "none" && proxyPortText && (!proxyPort || proxyPort < 1 || proxyPort > 65535 || !Number.isInteger(proxyPort))) {
+        errors.push(`Row ${index + 1}: proxy port must be an integer between 1 and 65535`);
+        return null;
+      }
+      if (proxyKind !== "none" && !proxyHost) {
+        errors.push(`Row ${index + 1}: proxy host is required when a proxy is configured`);
+        return null;
+      }
       const importedTags = parseTagsText(readText(row, ["tags", "标签"]));
       const proxyConfig: ProxyConfig =
         proxyKind !== "none"
@@ -916,6 +945,7 @@ export function EnvironmentsPage() {
           name: text.defaultName,
           tag: text.defaultTag,
         }),
+        environments,
       );
     } catch (error) {
       return {
@@ -924,6 +954,7 @@ export function EnvironmentsPage() {
       };
     }
   }, [
+    environments,
     environments.length,
     importText,
     settingsQuery.data,

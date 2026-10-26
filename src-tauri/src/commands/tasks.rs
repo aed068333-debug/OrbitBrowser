@@ -52,7 +52,10 @@ pub async fn run_task(
     input: RunTaskInput,
 ) -> AppResult<RunBatch> {
     let task = task_repo::get(state.db(), &input.task_id)?;
-    let options = input.options.clone().unwrap_or_default();
+    let mut options = input.options.clone().unwrap_or_default();
+    options.max_concurrency = options.max_concurrency.clamp(1, 32);
+    let mut input = input;
+    input.options = Some(options.clone());
     let batch = run_repo::create_queued_batch(state.db(), input, task.timeout_sec)?;
     let _ = app.emit("batch_progress_changed", &batch);
     spawn_batch_runs(app, state.inner().clone(), batch.clone(), task, options);
@@ -108,10 +111,11 @@ pub fn retry_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> 
         .batch_id
         .as_deref()
         .and_then(|id| run_repo::get_batch(state.db(), id).ok());
-    let options = batch
+    let mut options = batch
         .as_ref()
         .map(|batch| batch.options.clone())
         .unwrap_or_default();
+    options.max_concurrency = options.max_concurrency.clamp(1, 32);
     if let Some(batch) = batch {
         let _ = app.emit("batch_progress_changed", &batch);
     }

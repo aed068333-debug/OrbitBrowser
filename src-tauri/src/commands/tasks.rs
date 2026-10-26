@@ -203,9 +203,12 @@ fn spawn_batch_runs(
             return;
         }
 
-        let semaphore = Arc::new(Semaphore::new(options.max_concurrency.max(1) as usize));
+        let semaphore = state.batch_semaphore(&batch.id, options.max_concurrency.max(1) as usize);
         let mut handles = Vec::new();
         for run in runs {
+            if run.status != TaskRunStatus::Queued {
+                continue;
+            }
             let Ok(permit) = semaphore.clone().acquire_owned().await else {
                 continue;
             };

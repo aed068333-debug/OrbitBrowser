@@ -82,6 +82,7 @@ pub fn cancel_batch(app: AppHandle, state: State<'_, AppState>, batch_id: String
             TaskRunStatus::Succeeded
                 | TaskRunStatus::Failed
                 | TaskRunStatus::Cancelled
+                | TaskRunStatus::CancelRequested
                 | TaskRunStatus::TimedOut
                 | TaskRunStatus::Interrupted
         ) {

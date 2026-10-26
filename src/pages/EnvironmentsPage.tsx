@@ -578,7 +578,7 @@ function importRowsToDrafts(
         errors.push(`Row ${sourceRow}: name is required`);
         return null;
       }
-      const normalizedName = name.toLocaleLowerCase();
+      const normalizedName = name.trim().toLocaleLowerCase();
       const importedId = readText(row, ["id"]);
       if (seenNames.has(normalizedName)) {
         errors.push(`Row ${sourceRow}: duplicate name in import: ${name}`);

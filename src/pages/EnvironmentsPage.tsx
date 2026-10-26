@@ -426,32 +426,64 @@ function parseBoolean(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
-function splitCsvLine(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
+function parseCsvRecords(input: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let cell = "";
   let quoted = false;
+  let closedQuote = false;
 
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const next = line[index + 1];
-    if (char === '"' && quoted && next === '"') {
-      current += '"';
-      index += 1;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+        closedQuote = true;
+      } else {
+        cell += char;
+      }
       continue;
     }
-    if (char === '"') {
-      quoted = !quoted;
+
+    if (char === '"' && cell.trim() === "" && !closedQuote) {
+      cell = "";
+      quoted = true;
       continue;
     }
-    if (char === "," && !quoted) {
-      cells.push(current.trim());
-      current = "";
+    if (char === "," ) {
+      record.push(cell.trim());
+      cell = "";
+      closedQuote = false;
       continue;
     }
-    current += char;
+    if (char === "\n" || char === "\r") {
+      if (char === "\r" && next === "\n") index += 1;
+      record.push(cell.trim());
+      if (record.some((value) => value.length > 0)) records.push(record);
+      record = [];
+      cell = "";
+      closedQuote = false;
+      continue;
+    }
+    if (closedQuote && !/\s/.test(char)) {
+      throw new Error("CSV format error: unexpected character after a quoted field");
+    }
+    if (!closedQuote) cell += char;
   }
-  cells.push(current.trim());
-  return cells;
+
+  if (quoted) {
+    throw new Error("CSV format error: unclosed quoted field");
+  }
+  if (cell.length > 0 || record.length > 0) {
+    record.push(cell.trim());
+    if (record.some((value) => value.length > 0)) records.push(record);
+  }
+  return records;
 }
 
 function parseImportRows(input: string): Array<Record<string, unknown>> {
@@ -460,21 +492,35 @@ function parseImportRows(input: string): Array<Record<string, unknown>> {
     return [];
   }
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const parsed: unknown = JSON.parse(trimmed);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    if (!rows.every((row) => row !== null && typeof row === "object" && !Array.isArray(row))) {
+      throw new Error("JSON import must be an object or an array of objects");
+    }
+    return rows as Array<Record<string, unknown>>;
   }
 
-  const lines = trimmed.split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length < 2) {
-    return [];
+  const records = parseCsvRecords(input);
+  if (records.length === 0) return [];
+  if (records.length < 2) {
+    throw new Error("CSV import must include a header row and at least one data row");
   }
-  const headers = splitCsvLine(lines[0]).map((header) =>
-    header.trim().toLowerCase(),
-  );
-  return lines.slice(1).map((line) => {
-    const cells = splitCsvLine(line);
-    return headers.reduce<Record<string, unknown>>((row, header, index) => {
-      row[header] = cells[index] ?? "";
+
+  const headers = records[0].map((header) => header.trim().toLowerCase());
+  if (headers.some((header) => !header)) {
+    throw new Error("CSV header contains an empty column name");
+  }
+  const duplicateHeaders = headers.filter((header, index) => headers.indexOf(header) !== index);
+  if (duplicateHeaders.length > 0) {
+    throw new Error(`CSV header contains duplicate column: ${[...new Set(duplicateHeaders)].join(", ")}`);
+  }
+
+  return records.slice(1).map((cells, index) => {
+    if (cells.length !== headers.length) {
+      throw new Error(`CSV row ${index + 2} has ${cells.length} columns; expected ${headers.length}`);
+    }
+    return headers.reduce<Record<string, unknown>>((row, header, columnIndex) => {
+      row[header] = cells[columnIndex] ?? "";
       return row;
     }, {});
   });
@@ -540,7 +586,7 @@ function importRowsToDrafts(
       const proxyHost = readText(row, ["proxy_host", "host", "代理主机"]);
       const proxyPortText = readText(row, ["proxy_port", "port", "代理端口"]);
       const proxyPort = readNumber(row, ["proxy_port", "port", "代理端口"]);
-      if (proxyKind !== "none" && proxyPortText && (!proxyPort || proxyPort < 1 || proxyPort > 65535 || !Number.isInteger(proxyPort))) {
+      if (proxyKind !== "none" && (!proxyPortText || !proxyPort || proxyPort < 1 || proxyPort > 65535 || !Number.isInteger(proxyPort))) {
         errors.push(`Row ${index + 1}: proxy port must be an integer between 1 and 65535`);
         return null;
       }

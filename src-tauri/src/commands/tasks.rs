@@ -4,9 +4,7 @@ use crate::domain::run::{RunBatch, RunTaskInput, TaskRunStatus};
 use crate::domain::task::{AutomationTask, SaveTaskInput, ValidateTaskScriptResult};
 use crate::errors::{AppError, AppResult};
 use crate::storage::{legacy_cleanup, run_repo, task_repo};
-use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::Semaphore;
 
 #[tauri::command]
 pub fn list_tasks(state: State<'_, AppState>) -> AppResult<Vec<AutomationTask>> {

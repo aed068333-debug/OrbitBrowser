@@ -886,12 +886,16 @@ export function TaskDetailPage() {
                 <TextField
                   label={text.maxConcurrency}
                   min={1}
-                  onChange={(event) =>
+                  max={32}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
                     setRunOptions((current) => ({
                       ...current,
-                      max_concurrency: Number(event.target.value) || 1,
-                    }))
-                  }
+                      max_concurrency: Number.isFinite(value)
+                        ? Math.min(32, Math.max(1, Math.trunc(value) || 1))
+                        : 1,
+                    }));
+                  }}
                   type="number"
                   value={runOptions.max_concurrency}
                 />

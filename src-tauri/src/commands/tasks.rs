@@ -118,14 +118,19 @@ pub fn retry_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> 
     options.max_concurrency = options.max_concurrency.clamp(1, 32);
     if let Some(batch) = batch {
         let _ = app.emit("batch_progress_changed", &batch);
+        // Re-enter the batch scheduler so retries obey the same concurrency limit
+        // and stop-on-first-error policy as the original batch.
+        spawn_batch_runs(app, state.inner().clone(), batch, task, options);
+    } else {
+        // Legacy runs without a batch retain the single-run retry behavior.
+        tauri::async_runtime::spawn(execute_one_run(
+            app,
+            state.inner().clone(),
+            retry,
+            task,
+            options,
+        ));
     }
-    tauri::async_runtime::spawn(execute_one_run(
-        app,
-        state.inner().clone(),
-        retry,
-        task,
-        options,
-    ));
     Ok(())
 }
 

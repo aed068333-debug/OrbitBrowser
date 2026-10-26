@@ -171,7 +171,21 @@ fn spawn_batch_runs(
             }
         };
 
+        let semaphore = state.batch_semaphore(
+            &batch.id,
+            if options.stop_on_first_error {
+                1
+            } else {
+                options.max_concurrency.max(1) as usize
+            },
+        );
+
         if options.stop_on_first_error {
+            // Keep the entire stop-on-first-error sequence exclusive even if a retry
+            // starts another scheduler for this same batch.
+            let Ok(_batch_permit) = semaphore.clone().acquire_owned().await else {
+                return;
+            };
             let mut failed = runs.iter().any(|run| {
                 matches!(
                     run.status,
@@ -201,7 +215,6 @@ fn spawn_batch_runs(
             return;
         }
 
-        let semaphore = state.batch_semaphore(&batch.id, options.max_concurrency.max(1) as usize);
         let mut handles = Vec::new();
         for run in runs {
             if run.status != TaskRunStatus::Queued {

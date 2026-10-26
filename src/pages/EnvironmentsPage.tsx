@@ -486,10 +486,12 @@ function parseCsvRecords(input: string): string[][] {
   return records;
 }
 
-function parseImportRows(input: string): Array<Record<string, unknown>> {
+type ParsedImport = { rows: Array<Record<string, unknown>>; errors: string[] };
+
+function parseImportRows(input: string): ParsedImport {
   const trimmed = input.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
-    return [];
+    return { rows: [], errors: [] };
   }
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const parsed: unknown = JSON.parse(trimmed);
@@ -497,11 +499,11 @@ function parseImportRows(input: string): Array<Record<string, unknown>> {
     if (!rows.every((row) => row !== null && typeof row === "object" && !Array.isArray(row))) {
       throw new Error("JSON import must be an object or an array of objects");
     }
-    return rows as Array<Record<string, unknown>>;
+    return { rows: rows as Array<Record<string, unknown>>, errors: [] };
   }
 
   const records = parseCsvRecords(input);
-  if (records.length === 0) return [];
+  if (records.length === 0) return { rows: [], errors: [] };
   if (records.length < 2) {
     throw new Error("CSV import must include a header row and at least one data row");
   }
@@ -515,15 +517,22 @@ function parseImportRows(input: string): Array<Record<string, unknown>> {
     throw new Error(`CSV header contains duplicate column: ${[...new Set(duplicateHeaders)].join(", ")}`);
   }
 
-  return records.slice(1).map((cells, index) => {
+  const errors: string[] = [];
+  const rows: Array<Record<string, unknown>> = [];
+  records.slice(1).forEach((cells, index) => {
+    const sourceRow = index + 2;
     if (cells.length !== headers.length) {
-      throw new Error(`CSV row ${index + 2} has ${cells.length} columns; expected ${headers.length}`);
+      errors.push(`CSV row ${sourceRow} has ${cells.length} columns; expected ${headers.length}. This row was skipped.`);
+      return;
     }
-    return headers.reduce<Record<string, unknown>>((row, header, columnIndex) => {
-      row[header] = cells[columnIndex] ?? "";
-      return row;
+    const row = headers.reduce<Record<string, unknown>>((result, header, columnIndex) => {
+      result[header] = cells[columnIndex] ?? "";
+      return result;
     }, {});
+    row.__import_source_row = sourceRow;
+    rows.push(row);
   });
+  return { rows, errors };
 }
 
 function readText(row: Record<string, unknown>, keys: string[]): string {
@@ -563,21 +572,22 @@ function importRowsToDrafts(
   const seenNames = new Set<string>();
   const drafts = rows
     .map((row, index) => {
+      const sourceRow = Number(row.__import_source_row) || index + 1;
       const name = readText(row, ["name", "名称"]);
       if (!name) {
-        errors.push(`Row ${index + 1}: name is required`);
+        errors.push(`Row ${sourceRow}: name is required`);
         return null;
       }
       const normalizedName = name.toLocaleLowerCase();
       const importedId = readText(row, ["id"]);
       if (seenNames.has(normalizedName)) {
-        errors.push(`Row ${index + 1}: duplicate name in import: ${name}`);
+        errors.push(`Row ${sourceRow}: duplicate name in import: ${name}`);
         return null;
       }
       seenNames.add(normalizedName);
       const existingId = existingNames.get(normalizedName);
       if (existingId && existingId !== importedId) {
-        errors.push(`Row ${index + 1}: name already exists: ${name}`);
+        errors.push(`Row ${sourceRow}: name already exists: ${name}`);
         return null;
       }
       const proxyKind = normalizeProxyKind(
@@ -587,11 +597,11 @@ function importRowsToDrafts(
       const proxyPortText = readText(row, ["proxy_port", "port", "代理端口"]);
       const proxyPort = readNumber(row, ["proxy_port", "port", "代理端口"]);
       if (proxyKind !== "none" && (!proxyPortText || !proxyPort || proxyPort < 1 || proxyPort > 65535 || !Number.isInteger(proxyPort))) {
-        errors.push(`Row ${index + 1}: proxy port must be an integer between 1 and 65535`);
+        errors.push(`Row ${sourceRow}: proxy port must be an integer between 1 and 65535`);
         return null;
       }
       if (proxyKind !== "none" && !proxyHost) {
-        errors.push(`Row ${index + 1}: proxy host is required when a proxy is configured`);
+        errors.push(`Row ${sourceRow}: proxy host is required when a proxy is configured`);
         return null;
       }
       const importedTags = parseTagsText(readText(row, ["tags", "标签"]));
@@ -985,14 +995,16 @@ export function EnvironmentsPage() {
 
   const importPreview = useMemo<ImportPreview>(() => {
     try {
-      return importRowsToDrafts(
-        parseImportRows(importText),
+      const parsed = parseImportRows(importText);
+      const preview = importRowsToDrafts(
+        parsed.rows,
         createDefaultEnvironment(settingsQuery.data, environments.length + 1, {
           name: text.defaultName,
           tag: text.defaultTag,
         }),
         environments,
       );
+      return { ...preview, errors: [...parsed.errors, ...preview.errors] };
     } catch (error) {
       return {
         drafts: [],

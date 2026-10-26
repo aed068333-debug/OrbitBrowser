@@ -487,7 +487,7 @@ function parseCsvRecords(input: string): string[][] {
 }
 
 function parseImportRows(input: string): Array<Record<string, unknown>> {
-  const trimmed = input.trim();
+  const trimmed = input.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
     return [];
   }
@@ -1656,6 +1656,23 @@ export function EnvironmentsPage() {
           <p className="text-sm leading-6 text-ink-600">
             {text.bulk.importHint}
           </p>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium text-ink-700">Import CSV or JSON file</span>
+            <input
+              accept=".csv,.json,text/csv,application/json"
+              className="control-focus block w-full rounded-md border border-line bg-white px-3 py-2 text-sm"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                void file.text().then(setImportText).catch((error: unknown) => {
+                  setImportText("");
+                  window.alert(error instanceof Error ? error.message : String(error));
+                });
+                event.currentTarget.value = "";
+              }}
+              type="file"
+            />
+          </label>
           <TextareaField
             label={text.bulk.importInput}
             onChange={(event) => setImportText(event.target.value)}

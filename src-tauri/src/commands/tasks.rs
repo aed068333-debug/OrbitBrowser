@@ -63,6 +63,17 @@ pub async fn run_task(
 #[tauri::command]
 pub fn cancel_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> AppResult<()> {
     let run = run_repo::get_run(state.db(), &run_id)?;
+    if matches!(
+        run.status,
+        TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::TimedOut
+            | TaskRunStatus::Interrupted
+            | TaskRunStatus::CancelRequested
+    ) {
+        return Ok(());
+    }
     let status = if state.cancel_run(&run_id) {
         TaskRunStatus::CancelRequested
     } else {

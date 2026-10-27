@@ -2,7 +2,7 @@ use crate::domain::run::{RunBatch, RunOptions, RunTaskInput, TaskRun, TaskRunSta
 use crate::errors::{AppError, AppResult};
 use crate::storage::db::Db;
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{params, OptionalExtension, Row, TransactionBehavior};
 use uuid::Uuid;
 
 pub fn create_queued_batch(db: &Db, input: RunTaskInput, timeout_sec: i64) -> AppResult<RunBatch> {
@@ -131,11 +131,11 @@ pub fn create_retry_run(db: &Db, run_id: &str) -> AppResult<TaskRun> {
             "Only failed, cancelled, timed-out, or interrupted runs can be retried",
         ));
     }
-    let conn = db.connect()?;
+    let mut conn = db.connect()?;
     let now = Utc::now().to_rfc3339();
     let retry_id = format!("run_{}", Uuid::new_v4());
     let artifacts_dir = format!("runs/{retry_id}");
-    let tx = conn.unchecked_transaction()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     // Re-check the source inside the write transaction so a stale UI action
     // cannot create a retry after the source has become active or successful.

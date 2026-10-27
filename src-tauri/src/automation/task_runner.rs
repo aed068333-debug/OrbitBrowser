@@ -50,6 +50,28 @@ pub async fn execute_task_run(
 
     match execution {
         Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) if err.code == "run_not_queued" => {
+            // Cancellation can race with browser startup. If another command has
+            // already moved the run out of queued state, do not overwrite that
+            // state with a generic failure.
+            let current = run_repo::get_run(state.db(), &run.id)?;
+            if matches!(
+                current.status,
+                TaskRunStatus::Cancelled | TaskRunStatus::CancelRequested
+            ) {
+                mark_finished_with_events(
+                    &state,
+                    app.as_ref(),
+                    &run,
+                    TaskRunStatus::Cancelled,
+                    Some("task_cancelled"),
+                    Some("Task was cancelled before execution started"),
+                )?;
+                Err(AppError::new("task_cancelled", "Task was cancelled"))
+            } else {
+                Err(err)
+            }
+        }
         Ok(Err(err)) => {
             let status = match err.code.as_str() {
                 "task_cancelled" => TaskRunStatus::Cancelled,

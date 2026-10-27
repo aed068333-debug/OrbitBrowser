@@ -88,6 +88,7 @@ pub fn cancel_run(app: AppHandle, state: State<'_, AppState>, run_id: String) ->
 
 #[tauri::command]
 pub fn cancel_batch(app: AppHandle, state: State<'_, AppState>, batch_id: String) -> AppResult<()> {
+    let mut first_error = None;
     for run in run_repo::list_runs_by_batch(state.db(), &batch_id)? {
         if matches!(
             run.status,
@@ -105,14 +106,23 @@ pub fn cancel_batch(app: AppHandle, state: State<'_, AppState>, batch_id: String
         } else {
             TaskRunStatus::Cancelled
         };
-        if set_cancel_status_if_active(&state, &run.id, status.clone())? {
-            emit_run_status(&app, &run.id, status);
+        match set_cancel_status_if_active(&state, &run.id, status.clone()) {
+            Ok(true) => emit_run_status(&app, &run.id, status),
+            Ok(false) => {}
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
         }
     }
     if let Ok(batch) = run_repo::get_batch(state.db(), &batch_id) {
         let _ = app.emit("batch_progress_changed", &batch);
     }
-    Ok(())
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]

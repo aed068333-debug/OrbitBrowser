@@ -79,9 +79,10 @@ pub fn cancel_run(app: AppHandle, state: State<'_, AppState>, run_id: String) ->
     } else {
         TaskRunStatus::Cancelled
     };
-    run_repo::set_status(state.db(), &run_id, status.clone())?;
-    emit_run_status(&app, &run_id, status);
-    emit_batch_progress(&app, &state, &run)?;
+    if set_cancel_status_if_active(&state, &run_id, status.clone())? {
+        emit_run_status(&app, &run_id, status);
+        emit_batch_progress(&app, &state, &run)?;
+    }
     Ok(())
 }
 
@@ -104,8 +105,9 @@ pub fn cancel_batch(app: AppHandle, state: State<'_, AppState>, batch_id: String
         } else {
             TaskRunStatus::Cancelled
         };
-        run_repo::set_status(state.db(), &run.id, status.clone())?;
-        emit_run_status(&app, &run.id, status);
+        if set_cancel_status_if_active(&state, &run.id, status.clone())? {
+            emit_run_status(&app, &run.id, status);
+        }
     }
     if let Ok(batch) = run_repo::get_batch(state.db(), &batch_id) {
         let _ = app.emit("batch_progress_changed", &batch);
@@ -286,6 +288,32 @@ async fn execute_one_run(
     .await;
     state.remove_cancellation(&run.id);
     result
+}
+
+// A run can finish between the initial status read and the cancellation write.
+// Treat that race as a no-op, but preserve genuine storage errors while the run
+// is still in a cancellable state.
+fn set_cancel_status_if_active(
+    state: &AppState,
+    run_id: &str,
+    status: TaskRunStatus,
+) -> AppResult<bool> {
+    match run_repo::set_status(state.db(), run_id, status) {
+        Ok(()) => Ok(true),
+        Err(err) => match run_repo::get_run(state.db(), run_id) {
+            Ok(current)
+                if !matches!(
+                    current.status,
+                    TaskRunStatus::Queued
+                        | TaskRunStatus::Starting
+                        | TaskRunStatus::Running
+                ) =>
+            {
+                Ok(false)
+            }
+            _ => Err(err),
+        },
+    }
 }
 
 fn emit_run_status(app: &AppHandle, run_id: &str, status: TaskRunStatus) {

@@ -237,12 +237,21 @@ pub fn mark_started(db: &Db, run_id: &str) -> AppResult<()> {
         UPDATE task_runs
         SET status = 'running',
             started_at = COALESCE(started_at, ?1)
-        WHERE id = ?2
+        WHERE id = ?2 AND status = 'queued'
         "#,
         params![now, run_id],
     )?;
     if affected == 0 {
-        return Err(AppError::new("task_not_found", "Run does not exist"));
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = ?1)",
+            params![run_id],
+            |row| row.get(0),
+        )?;
+        return Err(if exists {
+            AppError::new("run_not_queued", "Run is no longer queued and cannot be started")
+        } else {
+            AppError::new("task_not_found", "Run does not exist")
+        });
     }
     refresh_batch_counts(db, run_id)
 }

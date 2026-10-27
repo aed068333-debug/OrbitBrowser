@@ -221,6 +221,7 @@ pub fn set_status(db: &Db, run_id: &str, status: TaskRunStatus) -> AppResult<()>
             finished_at = CASE WHEN ?1 IN ('cancelled', 'failed', 'succeeded', 'timed_out', 'interrupted') THEN ?2 ELSE finished_at END
         WHERE id = ?3
           AND status IN ('queued', 'starting', 'running', 'cancel_requested')
+          AND ?1 IN ('cancel_requested', 'cancelled')
           AND NOT (status = 'cancel_requested' AND ?1 != 'cancelled')
         "#,
         params![status_text, now, run_id],
@@ -691,12 +692,17 @@ mod tests {
             .next()
             .expect("queued run should exist");
 
-        set_status(&db, &run.id, TaskRunStatus::Running)?;
+        mark_started(&db, &run.id)?;
         set_status(&db, &run.id, TaskRunStatus::CancelRequested)?;
 
         let status_err = set_status(&db, &run.id, TaskRunStatus::Succeeded)
             .expect_err("a cancellation request must block status changes to success");
         assert_eq!(status_err.code, "run_already_finished");
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
+
+        let invalid_transition = set_status(&db, &run.id, TaskRunStatus::Failed)
+            .expect_err("set_status must only accept cancellation transitions");
+        assert_eq!(invalid_transition.code, "run_already_finished");
         assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
 
         let err = mark_finished(&db, &run.id, TaskRunStatus::Succeeded, None, None)

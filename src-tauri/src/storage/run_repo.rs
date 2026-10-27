@@ -220,11 +220,26 @@ pub fn set_status(db: &Db, run_id: &str, status: TaskRunStatus) -> AppResult<()>
         SET status = ?1,
             finished_at = CASE WHEN ?1 IN ('cancelled', 'failed', 'succeeded', 'timed_out', 'interrupted') THEN ?2 ELSE finished_at END
         WHERE id = ?3
+          AND status IN ('queued', 'starting', 'running', 'cancel_requested')
+          AND NOT (status = 'cancel_requested' AND ?1 != 'cancelled')
         "#,
         params![status_text, now, run_id],
     )?;
     if affected == 0 {
-        return Err(AppError::new("task_not_found", "Run does not exist"));
+        let current_status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM task_runs WHERE id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        return Err(match current_status {
+            None => AppError::new("task_not_found", "Run does not exist"),
+            Some(status) => AppError::new(
+                "run_already_finished",
+                format!("Run status cannot be changed from {status} to {status_text}"),
+            ),
+        });
     }
     refresh_batch_counts(db, run_id)
 }

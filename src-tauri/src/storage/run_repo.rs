@@ -290,7 +290,7 @@ pub fn mark_finished(
             error_message = ?4
         WHERE id = ?5
           AND status IN ('queued', 'starting', 'running', 'cancel_requested')
-          AND NOT (status = 'cancel_requested' AND ?1 = 'succeeded')
+          AND NOT (status = 'cancel_requested' AND ?1 != 'cancelled')
         "#,
         params![status_text, now, error_code, error_message, run_id],
     )?;
@@ -703,6 +703,13 @@ mod tests {
             .expect_err("a cancellation request must block success");
         assert_eq!(err.code, "run_already_finished");
         assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
+
+        for blocked_status in [TaskRunStatus::Failed, TaskRunStatus::TimedOut] {
+            let err = mark_finished(&db, &run.id, blocked_status, None, None)
+                .expect_err("a cancellation request must only finish as cancelled");
+            assert_eq!(err.code, "run_already_finished");
+            assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
+        }
 
         mark_finished(
             &db,

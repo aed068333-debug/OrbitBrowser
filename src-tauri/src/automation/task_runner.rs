@@ -116,14 +116,40 @@ pub async fn execute_task_run(
         }
         Err(_) => {
             cancellation.cancel();
-            mark_finished_with_events(
+            let timeout_result = mark_finished_with_events(
                 &state,
                 app.as_ref(),
                 &run,
                 TaskRunStatus::TimedOut,
                 Some("task_timeout"),
                 Some("Task execution timed out"),
-            )?;
+            );
+            if let Err(err) = timeout_result {
+                if err.code != "run_already_finished" {
+                    return Err(err);
+                }
+                let current = run_repo::get_run(state.db(), &run.id)?;
+                if current.status == TaskRunStatus::CancelRequested {
+                    mark_finished_with_events(
+                        &state,
+                        app.as_ref(),
+                        &run,
+                        TaskRunStatus::Cancelled,
+                        Some("task_cancelled"),
+                        Some("Cancellation was requested as the task timed out"),
+                    )?;
+                    append_log_with_event(
+                        &state,
+                        app.as_ref(),
+                        &run,
+                        "info",
+                        "Task cancellation won the timeout race",
+                        None,
+                    )?;
+                    return Err(AppError::new("task_cancelled", "Task was cancelled"));
+                }
+                return Err(err);
+            }
             append_log_with_event(
                 &state,
                 app.as_ref(),

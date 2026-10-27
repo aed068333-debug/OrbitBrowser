@@ -72,6 +72,24 @@ pub async fn execute_task_run(
                 Err(err)
             }
         }
+        Ok(Err(err)) if err.code == "run_already_finished" => {
+            // A cancellation request can win the race against the final success
+            // write. Preserve that cancellation instead of converting it to failure.
+            let current = run_repo::get_run(state.db(), &run.id)?;
+            if current.status == TaskRunStatus::CancelRequested {
+                mark_finished_with_events(
+                    &state,
+                    app.as_ref(),
+                    &run,
+                    TaskRunStatus::Cancelled,
+                    Some("task_cancelled"),
+                    Some("Task was cancelled"),
+                )?;
+                Err(AppError::new("task_cancelled", "Task was cancelled"))
+            } else {
+                Err(err)
+            }
+        }
         Ok(Err(err)) => {
             let status = match err.code.as_str() {
                 "task_cancelled" => TaskRunStatus::Cancelled,

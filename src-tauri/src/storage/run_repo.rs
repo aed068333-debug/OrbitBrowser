@@ -658,6 +658,46 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_request_cannot_be_overwritten_by_success() -> AppResult<()> {
+        let (db, data_dir) = test_db()?;
+        let task = save_test_task(&db)?;
+        let environment = save_test_environment(&db)?;
+        let batch = create_queued_batch(
+            &db,
+            RunTaskInput {
+                task_id: task.id.clone(),
+                environment_ids: vec![environment.id],
+                options: Some(RunOptions::default()),
+            },
+            task.timeout_sec,
+        )?;
+        let run = list_runs_by_batch(&db, &batch.id)?
+            .into_iter()
+            .next()
+            .expect("queued run should exist");
+
+        set_status(&db, &run.id, TaskRunStatus::Running)?;
+        set_status(&db, &run.id, TaskRunStatus::CancelRequested)?;
+
+        let err = mark_finished(&db, &run.id, TaskRunStatus::Succeeded, None, None)
+            .expect_err("a cancellation request must block success");
+        assert_eq!(err.code, "run_already_finished");
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
+
+        mark_finished(
+            &db,
+            &run.id,
+            TaskRunStatus::Cancelled,
+            Some("task_cancelled"),
+            Some("Task was cancelled"),
+        )?;
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::Cancelled);
+
+        std::fs::remove_dir_all(data_dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn delete_run_removes_logs_artifacts_and_empty_batch() -> AppResult<()> {
         let (db, data_dir) = test_db()?;
         let task = save_test_task(&db)?;

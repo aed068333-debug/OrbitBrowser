@@ -694,6 +694,11 @@ mod tests {
         set_status(&db, &run.id, TaskRunStatus::Running)?;
         set_status(&db, &run.id, TaskRunStatus::CancelRequested)?;
 
+        let status_err = set_status(&db, &run.id, TaskRunStatus::Succeeded)
+            .expect_err("a cancellation request must block status changes to success");
+        assert_eq!(status_err.code, "run_already_finished");
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::CancelRequested);
+
         let err = mark_finished(&db, &run.id, TaskRunStatus::Succeeded, None, None)
             .expect_err("a cancellation request must block success");
         assert_eq!(err.code, "run_already_finished");
@@ -706,6 +711,11 @@ mod tests {
             Some("task_cancelled"),
             Some("Task was cancelled"),
         )?;
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::Cancelled);
+
+        let terminal_err = set_status(&db, &run.id, TaskRunStatus::Failed)
+            .expect_err("terminal cancelled status must not be overwritten");
+        assert_eq!(terminal_err.code, "run_already_finished");
         assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::Cancelled);
 
         std::fs::remove_dir_all(data_dir)?;

@@ -274,11 +274,25 @@ pub fn mark_finished(
             error_code = ?3,
             error_message = ?4
         WHERE id = ?5
+          AND status IN ('queued', 'starting', 'running', 'cancel_requested')
         "#,
         params![status_text, now, error_code, error_message, run_id],
     )?;
     if affected == 0 {
-        return Err(AppError::new("task_not_found", "Run does not exist"));
+        let current_status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM task_runs WHERE id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        return Err(match current_status {
+            None => AppError::new("task_not_found", "Run does not exist"),
+            Some(status) => AppError::new(
+                "run_already_finished",
+                format!("Run is no longer active (current status: {status})"),
+            ),
+        });
     }
     refresh_batch_counts(db, run_id)
 }

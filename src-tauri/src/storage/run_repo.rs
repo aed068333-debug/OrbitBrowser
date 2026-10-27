@@ -137,6 +137,48 @@ pub fn create_retry_run(db: &Db, run_id: &str) -> AppResult<TaskRun> {
     let artifacts_dir = format!("runs/{retry_id}");
     let tx = conn.unchecked_transaction()?;
 
+    // Re-check the source inside the write transaction so a stale UI action
+    // cannot create a retry after the source has become active or successful.
+    let current_source_status: String = tx.query_row(
+        "SELECT status FROM task_runs WHERE id = ?1",
+        params![run_id],
+        |row| row.get(0),
+    ).optional()?.ok_or_else(|| AppError::new("task_not_found", "Run does not exist"))?;
+    if !matches!(
+        current_source_status.as_str(),
+        "failed" | "cancelled" | "timed_out" | "interrupted"
+    ) {
+        return Err(AppError::new(
+            "run_not_retryable",
+            "Only failed, cancelled, timed-out, or interrupted runs can be retried",
+        ));
+    }
+
+    let active_retry_count: i64 = tx.query_row(
+        r#"
+        SELECT COUNT(*) FROM task_runs
+        WHERE batch_id IS ?1 AND task_id = ?2 AND environment_id = ?3
+          AND status IN ('queued', 'starting', 'running', 'cancel_requested')
+        "#,
+        params![source.batch_id, source.task_id, source.environment_id],
+        |row| row.get(0),
+    )?;
+    if active_retry_count > 0 {
+        return Err(AppError::new(
+            "retry_in_progress",
+            "This task and environment already have a queued or active run",
+        ));
+    }
+
+    let next_attempt: i64 = tx.query_row(
+        r#"
+        SELECT COALESCE(MAX(attempt), 0) + 1 FROM task_runs
+        WHERE batch_id IS ?1 AND task_id = ?2 AND environment_id = ?3
+        "#,
+        params![source.batch_id, source.task_id, source.environment_id],
+        |row| row.get(0),
+    )?;
+
     tx.execute(
         r#"
         INSERT INTO task_runs (
@@ -150,7 +192,7 @@ pub fn create_retry_run(db: &Db, run_id: &str) -> AppResult<TaskRun> {
             source.batch_id,
             source.task_id,
             source.environment_id,
-            source.attempt + 1,
+            next_attempt,
             source.timeout_sec,
             now,
             artifacts_dir

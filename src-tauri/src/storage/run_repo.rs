@@ -119,6 +119,18 @@ pub fn get_run(db: &Db, run_id: &str) -> AppResult<TaskRun> {
 
 pub fn create_retry_run(db: &Db, run_id: &str) -> AppResult<TaskRun> {
     let source = get_run(db, run_id)?;
+    if !matches!(
+        source.status,
+        TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::TimedOut
+            | TaskRunStatus::Interrupted
+    ) {
+        return Err(AppError::new(
+            "run_not_retryable",
+            "Only failed, cancelled, timed-out, or interrupted runs can be retried",
+        ));
+    }
     let conn = db.connect()?;
     let now = Utc::now().to_rfc3339();
     let retry_id = format!("run_{}", Uuid::new_v4());

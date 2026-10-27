@@ -275,6 +275,7 @@ pub fn mark_finished(
             error_message = ?4
         WHERE id = ?5
           AND status IN ('queued', 'starting', 'running', 'cancel_requested')
+          AND NOT (status = 'cancel_requested' AND ?1 = 'succeeded')
         "#,
         params![status_text, now, error_code, error_message, run_id],
     )?;

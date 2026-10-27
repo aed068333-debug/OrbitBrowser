@@ -198,11 +198,24 @@ fn spawn_batch_runs(
             let Ok(_batch_permit) = semaphore.clone().acquire_owned().await else {
                 return;
             };
-            let mut failed = runs.iter().any(|run| {
-                matches!(
-                    run.status,
-                    TaskRunStatus::Failed | TaskRunStatus::TimedOut | TaskRunStatus::Interrupted
-                )
+            // A manual retry is a new attempt. Historical failures from lower
+            // attempts must not block that retry, but must still stop queued first
+            // attempts when stop-on-first-error is enabled.
+            let first_queued_attempt = runs
+                .iter()
+                .filter(|run| run.status == TaskRunStatus::Queued)
+                .map(|run| run.attempt)
+                .min();
+            let mut failed = first_queued_attempt.is_some_and(|attempt| {
+                runs.iter().any(|run| {
+                    run.attempt >= attempt
+                        && matches!(
+                            run.status,
+                            TaskRunStatus::Failed
+                                | TaskRunStatus::TimedOut
+                                | TaskRunStatus::Interrupted
+                        )
+                })
             });
             for run in runs {
                 if run.status != TaskRunStatus::Queued {

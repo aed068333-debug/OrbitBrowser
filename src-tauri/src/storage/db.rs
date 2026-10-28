@@ -29,6 +29,7 @@ impl Db {
 
     pub fn connect(&self) -> rusqlite::Result<Connection> {
         let conn = Connection::open(self.db_path.as_ref())?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         Ok(conn)
     }

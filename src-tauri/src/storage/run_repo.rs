@@ -717,6 +717,45 @@ mod tests {
     }
 
     #[test]
+    fn retry_uses_next_attempt_and_blocks_duplicate_active_retry() -> AppResult<()> {
+        let (db, data_dir) = test_db()?;
+        let task = save_test_task(&db)?;
+        let environment = save_test_environment(&db)?;
+        let batch = create_queued_batch(
+            &db,
+            RunTaskInput {
+                task_id: task.id.clone(),
+                environment_ids: vec![environment.id],
+                options: Some(RunOptions::default()),
+            },
+            task.timeout_sec,
+        )?;
+        let source = list_runs_by_batch(&db, &batch.id)?
+            .into_iter()
+            .next()
+            .expect("initial run should exist");
+
+        mark_finished(
+            &db,
+            &source.id,
+            TaskRunStatus::Failed,
+            Some("test_failure"),
+            Some("Expected test failure"),
+        )?;
+
+        let retry = create_retry_run(&db, &source.id)?;
+        assert_eq!(retry.attempt, 2);
+        assert_eq!(retry.status, TaskRunStatus::Queued);
+
+        let duplicate_err = create_retry_run(&db, &source.id)
+            .expect_err("an active retry for the same batch/task/environment must block duplicates");
+        assert_eq!(duplicate_err.code, "retry_in_progress");
+
+        std::fs::remove_dir_all(data_dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn cancellation_request_cannot_be_overwritten_by_success() -> AppResult<()> {
         let (db, data_dir) = test_db()?;
         let task = save_test_task(&db)?;

@@ -286,30 +286,17 @@ fn spawn_batch_runs(
                     continue;
                 }
                 if failed {
-                    match run_repo::mark_finished(
+                    if run_repo::mark_finished(
                         state.db(),
                         &run.id,
                         TaskRunStatus::Cancelled,
                         Some("stop_on_first_error"),
                         Some("Cancelled because an earlier run in this batch failed"),
-                    ) {
-                        Ok(()) => {
-                            emit_run_status(&app, &run.id, TaskRunStatus::Cancelled);
-                            if let Err(err) = emit_batch_progress(&app, &state, &run) {
-                                emit_diagnostic_warning(
-                                    &app,
-                                    "batch_progress_refresh_failed",
-                                    &format!("Could not refresh batch progress after cancelling run {}: {}", run.id, err),
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            emit_diagnostic_warning(
-                                &app,
-                                "queued_run_cancellation_failed",
-                                &format!("Could not cancel queued run {} after an earlier batch failure: {}", run.id, err),
-                            );
-                        }
+                    )
+                    .is_ok()
+                    {
+                        emit_run_status(&app, &run.id, TaskRunStatus::Cancelled);
+                        let _ = emit_batch_progress(&app, &state, &run);
                     }
                     continue;
                 }

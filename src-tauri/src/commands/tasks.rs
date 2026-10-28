@@ -138,12 +138,18 @@ pub fn retry_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> 
     };
 
     let retry = run_repo::create_retry_run(state.db(), &run_id)?;
+    let batch = match batch {
+        Some(batch) => Some(run_repo::get_batch(state.db(), &batch.id)?),
+        None => None,
+    };
     let mut options = batch
         .as_ref()
         .map(|batch| batch.options.clone())
         .unwrap_or_default();
     options.max_concurrency = options.max_concurrency.clamp(1, 32);
     if let Some(batch) = batch {
+        // create_retry_run refreshes persisted counters; fetch the batch again so
+        // the UI receives current queued/running/finished counts, not a stale snapshot.
         let _ = app.emit("batch_progress_changed", &batch);
         // Re-enter the batch scheduler so retries obey the same concurrency limit
         // and stop-on-first-error policy as the original batch.

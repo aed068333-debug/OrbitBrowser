@@ -93,7 +93,6 @@ pub fn list_runs(db: &Db) -> AppResult<Vec<TaskRun>> {
                queued_at, started_at, finished_at, error_code, error_message, artifacts_dir
         FROM task_runs
         ORDER BY queued_at DESC
-        LIMIT 200
         "#,
     )?;
     let rows = stmt.query_map([], row_to_run)?;

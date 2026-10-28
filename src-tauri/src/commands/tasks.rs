@@ -247,7 +247,12 @@ fn spawn_batch_runs(
                     options.clone(),
                 )
                 .await;
-                failed = result.is_err();
+                // A user-requested cancellation is not a task failure and should
+                // not trigger stop-on-first-error for the remaining queued runs.
+                failed = match result {
+                    Ok(()) => false,
+                    Err(err) => err.code != "task_cancelled",
+                };
             }
             return;
         }

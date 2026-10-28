@@ -168,6 +168,31 @@ pub fn resume_queued_batches(app: AppHandle, state: AppState) -> AppResult<usize
         let task = match task_repo::get(state.db(), &batch.task_id) {
             Ok(task) => task,
             Err(err) => {
+                if err.code == "task_not_found" {
+                    if let Ok(runs) = run_repo::list_runs_by_batch(state.db(), &batch.id) {
+                        for run in runs {
+                            if run.status == TaskRunStatus::Queued {
+                                if let Err(finish_err) = run_repo::mark_finished(
+                                    state.db(),
+                                    &run.id,
+                                    TaskRunStatus::Failed,
+                                    Some("task_not_found"),
+                                    Some("Task is missing; queued run cannot be resumed"),
+                                ) {
+                                    let _ = app.emit(
+                                        "diagnostic_warning",
+                                        format!("Failed to close queued run {}: {}", run.id, finish_err.message),
+                                    );
+                                } else {
+                                    emit_run_status(&app, &run.id, TaskRunStatus::Failed);
+                                }
+                            }
+                        }
+                        if let Ok(updated_batch) = run_repo::get_batch(state.db(), &batch.id) {
+                            let _ = app.emit("batch_progress_changed", &updated_batch);
+                        }
+                    }
+                }
                 let _ = app.emit(
                     "diagnostic_warning",
                     format!("Failed to recover batch {}: {}", batch.id, err.message),

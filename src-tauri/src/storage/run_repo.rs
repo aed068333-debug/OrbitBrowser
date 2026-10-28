@@ -756,6 +756,42 @@ mod tests {
     }
 
     #[test]
+    fn queued_run_can_be_cancelled_and_batch_counts_are_refreshed() -> AppResult<()> {
+        let (db, data_dir) = test_db()?;
+        let task = save_test_task(&db)?;
+        let environment = save_test_environment(&db)?;
+        let batch = create_queued_batch(
+            &db,
+            RunTaskInput {
+                task_id: task.id.clone(),
+                environment_ids: vec![environment.id],
+                options: Some(RunOptions::default()),
+            },
+            task.timeout_sec,
+        )?;
+        let run = list_runs_by_batch(&db, &batch.id)?
+            .into_iter()
+            .next()
+            .expect("queued run should exist");
+
+        mark_finished(
+            &db,
+            &run.id,
+            TaskRunStatus::Cancelled,
+            Some("stop_on_first_error"),
+            Some("Cancelled because an earlier run in this batch failed"),
+        )?;
+
+        assert_eq!(get_run(&db, &run.id)?.status, TaskRunStatus::Cancelled);
+        let updated_batch = get_batch(&db, &batch.id)?;
+        assert_eq!(updated_batch.queued_count, 0);
+        assert_eq!(updated_batch.cancelled_count, 1);
+
+        std::fs::remove_dir_all(data_dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn cancellation_request_cannot_be_overwritten_by_success() -> AppResult<()> {
         let (db, data_dir) = test_db()?;
         let task = save_test_task(&db)?;

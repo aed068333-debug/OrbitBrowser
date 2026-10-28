@@ -746,6 +746,9 @@ mod tests {
         let retry = create_retry_run(&db, &source.id)?;
         assert_eq!(retry.attempt, 2);
         assert_eq!(retry.status, TaskRunStatus::Queued);
+        let retried_batch = get_batch(&db, &batch.id)?;
+        assert_eq!(retried_batch.queued_count, 1);
+        assert_eq!(retried_batch.finished_at, None);
 
         let duplicate_err = create_retry_run(&db, &source.id)
             .expect_err("an active retry for the same batch/task/environment must block duplicates");

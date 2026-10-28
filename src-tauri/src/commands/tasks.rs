@@ -139,7 +139,19 @@ pub fn retry_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> 
 
     let retry = run_repo::create_retry_run(state.db(), &run_id)?;
     let batch = match batch {
-        Some(batch) => Some(run_repo::get_batch(state.db(), &batch.id)?),
+        Some(previous) => {
+            let refreshed = match run_repo::get_batch(state.db(), &previous.id) {
+                Ok(batch) => batch,
+                Err(err) => {
+                    let _ = app.emit(
+                        "diagnostic_warning",
+                        format!("Retry {} was created but batch progress refresh failed: {}", retry.id, err.message),
+                    );
+                    previous
+                }
+            };
+            Some(refreshed)
+        }
         None => None,
     };
     let mut options = batch

@@ -127,12 +127,17 @@ pub fn cancel_batch(app: AppHandle, state: State<'_, AppState>, batch_id: String
 
 #[tauri::command]
 pub fn retry_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> AppResult<()> {
+    // Resolve all scheduler dependencies before inserting a new queued attempt.
+    // Otherwise a task/batch lookup error after create_retry_run succeeds could
+    // leave a queued run with no scheduler responsible for executing it.
+    let source = run_repo::get_run(state.db(), &run_id)?;
+    let task = task_repo::get(state.db(), &source.task_id)?;
+    let batch = match source.batch_id.as_deref() {
+        Some(batch_id) => Some(run_repo::get_batch(state.db(), batch_id)?),
+        None => None,
+    };
+
     let retry = run_repo::create_retry_run(state.db(), &run_id)?;
-    let task = task_repo::get(state.db(), &retry.task_id)?;
-    let batch = retry
-        .batch_id
-        .as_deref()
-        .and_then(|id| run_repo::get_batch(state.db(), id).ok());
     let mut options = batch
         .as_ref()
         .map(|batch| batch.options.clone())

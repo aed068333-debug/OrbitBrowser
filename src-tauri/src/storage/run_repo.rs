@@ -775,6 +775,39 @@ mod tests {
     }
 
     #[test]
+    fn active_task_run_query_tracks_queue_lifecycle() -> AppResult<()> {
+        let (db, data_dir) = test_db()?;
+        let task = save_test_task(&db)?;
+        let environment = save_test_environment(&db)?;
+        let batch = create_queued_batch(
+            &db,
+            RunTaskInput {
+                task_id: task.id.clone(),
+                environment_ids: vec![environment.id],
+                options: Some(RunOptions::default()),
+            },
+            task.timeout_sec,
+        )?;
+
+        assert!(has_active_runs_for_task(&db, &task.id)?);
+        let run = list_runs_by_batch(&db, &batch.id)?
+            .into_iter()
+            .next()
+            .expect("queued run should exist");
+        mark_finished(
+            &db,
+            &run.id,
+            TaskRunStatus::Cancelled,
+            Some("test_cancelled"),
+            Some("Finished for active-run query test"),
+        )?;
+        assert!(!has_active_runs_for_task(&db, &task.id)?);
+
+        std::fs::remove_dir_all(data_dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn queued_run_can_be_cancelled_and_batch_counts_are_refreshed() -> AppResult<()> {
         let (db, data_dir) = test_db()?;
         let task = save_test_task(&db)?;

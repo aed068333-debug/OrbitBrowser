@@ -69,6 +69,22 @@ pub fn create_queued_batch(db: &Db, input: RunTaskInput, timeout_sec: i64) -> Ap
     Ok(batch)
 }
 
+pub fn has_active_runs_for_task(db: &Db, task_id: &str) -> AppResult<bool> {
+    let conn = db.connect()?;
+    let active: bool = conn.query_row(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM task_runs
+            WHERE task_id = ?1
+              AND status IN ('queued', 'starting', 'running', 'cancel_requested')
+        )
+        "#,
+        params![task_id],
+        |row| row.get(0),
+    )?;
+    Ok(active)
+}
+
 pub fn list_runs(db: &Db) -> AppResult<Vec<TaskRun>> {
     let conn = db.connect()?;
     let mut stmt = conn.prepare(

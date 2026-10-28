@@ -30,6 +30,24 @@ pub fn save_task(state: State<'_, AppState>, input: SaveTaskInput) -> AppResult<
 #[tauri::command]
 pub fn delete_task(state: State<'_, AppState>, id: String) -> AppResult<()> {
     task_repo::get(state.db(), &id)?;
+    // Do not remove run records while a scheduler may still be executing them.
+    // Deleting those rows would leave the runner working without persisted state.
+    let active_run = run_repo::list_runs(state.db())?.into_iter().find(|run| {
+        run.task_id == id
+            && matches!(
+                run.status,
+                TaskRunStatus::Queued
+                    | TaskRunStatus::Starting
+                    | TaskRunStatus::Running
+                    | TaskRunStatus::CancelRequested
+            )
+    });
+    if active_run.is_some() {
+        return Err(AppError::new(
+            "task_has_active_runs",
+            "Cannot delete a task while it has queued or active runs. Cancel or finish those runs first.",
+        ));
+    }
     let artifact_dirs = run_repo::delete_runs_for_task(state.db(), &id)?;
     legacy_cleanup::delete_ai_conversations_for_task(state.db(), &id)?;
     legacy_cleanup::clear_agent_task_reference(state.db(), &id)?;

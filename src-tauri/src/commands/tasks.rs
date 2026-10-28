@@ -214,12 +214,34 @@ fn spawn_batch_runs(
     options: crate::domain::run::RunOptions,
 ) {
     tauri::async_runtime::spawn(async move {
-        let runs = match run_repo::list_runs_by_batch(state.db(), &batch.id) {
-            Ok(runs) => runs,
-            Err(err) => {
+        // SQLite can be briefly busy while another command updates run state.
+        // Retry transient reads before abandoning this scheduler and leaving queued
+        // runs waiting until the next application restart.
+        let mut last_error = None;
+        let mut loaded_runs = None;
+        for attempt in 0..3 {
+            match run_repo::list_runs_by_batch(state.db(), &batch.id) {
+                Ok(runs) => {
+                    loaded_runs = Some(runs);
+                    break;
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    if attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_millis(200 * (attempt + 1))).await;
+                    }
+                }
+            }
+        }
+        let runs = match loaded_runs {
+            Some(runs) => runs,
+            None => {
+                let message = last_error
+                    .map(|err| err.message)
+                    .unwrap_or_else(|| "Unknown storage error".to_string());
                 let _ = app.emit(
                     "diagnostic_warning",
-                    format!("Failed to read batch runs: {}", err.message),
+                    format!("Failed to read batch runs after retries: {}", message),
                 );
                 return;
             }
